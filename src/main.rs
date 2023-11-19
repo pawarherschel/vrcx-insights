@@ -174,7 +174,7 @@ pub fn get_others_for(
 
             rows.iter()
                 .filter(|row| {
-                    row.location.is_some() && row.user_id.is_some() && row.user_id.clone().unwrap() != user_id && row.user_id.clone().unwrap() != "usr_c2a23c47-1622-4b7a-90a4-b824fcaacc69"
+                    row.location.is_some() && row.user_id.is_some() && row.user_id.clone().unwrap() != user_id
                 })
                 .map(|row| row.user_id.clone().unwrap().clone())
                 .collect::<HashSet<_>>()
