@@ -1,22 +1,22 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub struct Vertex {
-    name: String,
-    everyone_else: HashMap<Vertex, u32>,
+    pub user_id: String,
+    pub everyone_else: HashMap<Vertex, u32>,
 }
 
 impl Hash for Vertex {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
+        self.user_id.hash(state);
     }
 }
 
 impl Vertex {
     pub fn new(name: impl ToString) -> Vertex {
         Vertex {
-            name: name.to_string(),
+            user_id: name.to_string(),
             ..Default::default()
         }
     }
