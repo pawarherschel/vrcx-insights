@@ -5,7 +5,7 @@ pub mod zaphkiel {
     pub mod group_access_type;
     pub mod join_leave_event;
     pub mod macros;
-    pub mod trustfall;
+    // pub mod trustfall;
     pub mod utils;
     pub mod vertex;
     pub mod world_instance;
