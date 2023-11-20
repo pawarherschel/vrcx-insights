@@ -1,2 +1,7 @@
 /target
 /db
+graph.ron
+graph2_sorted.ron
+owner_id.txt
+owner_name.txt
+sorted_undirected_graph.ron
