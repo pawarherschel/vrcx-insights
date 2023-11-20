@@ -25,13 +25,11 @@ fn main() {
 
     let cache = Arc::new(RwLock::new(HashMap::new()));
 
-    let user_id = time_it!(at once | format!("getting uuid of {}", OWNER_NAME.clone()) => get_uuid_of(OWNER_NAME.clone().into(), &conn));
+    let latest_name = time_it!(at once | "getting latest name of owner" => get_display_name_for(OWNER_ID.into(), &conn, cache.clone()));
 
-    let latest_name = time_it!(at once | format!("getting latest name of {}", user_id.clone()) => get_display_name_for(user_id.clone(), &conn, cache.clone()));
+    let locations = time_it!(at once | "getting the locations the user was in" => get_locations_for(OWNER_ID.into(), &conn));
 
-    let locations = time_it!(at once | "getting the locations the user was in" => get_locations_for(user_id.clone(), &conn));
-
-    let others = time_it!(at once | "finding out the other users the user has seen" => get_others_for(user_id.clone(), &conn, locations, ));
+    let others = time_it!("finding out the other users the user has seen" => get_others_for(OWNER_ID.into(), &conn, locations, ));
 
     let others_names = time_it!(at once | "getting names for other users" => others
         .par_iter()
@@ -70,12 +68,14 @@ fn main() {
         graph.clone().write().unwrap().insert(latest_name, others);
     }));
 
-    to_writer_pretty(
-        std::fs::File::create("graph.ron").unwrap(),
-        &graph,
-        Default::default(),
-    )
-    .unwrap();
+    time_it!("writing to graph.ron" =>
+        to_writer_pretty(
+            std::fs::File::create("graph.ron").unwrap(),
+            &graph,
+            Default::default(),
+        )
+        .unwrap()
+    );
 
     let graph2 = time_it!(at once | "filtering graph" => graph
         .clone()
@@ -124,43 +124,56 @@ fn main() {
         b_len.cmp(&a_len)
     }));
 
-    time_it!("todo!(\"sorting adjacency list by values\")" => {
+    time_it!("writing to graph2_sorted.ron" =>
+        to_writer_pretty(
+            std::fs::File::create("graph2_sorted.ron").unwrap(),
+            &graph2_sorted,
+            Default::default(),
+        )
+        .unwrap()
+    );
 
+    let undirected_graph = time_it!("convert the directed graph into an undirected graph" => {
+        let mut adjacency_matrix = HashMap::new();
+        for (name, others) in graph2_sorted.iter() {
+            let mut current_list = adjacency_matrix.entry(name.clone()).or_insert_with(HashSet::new).clone();
+            for (other, _) in others.iter() {
+                current_list.insert(other.clone());
+            }
+
+            for other in current_list.iter() {
+                let mut other_list = adjacency_matrix.entry(other.clone()).or_insert_with(HashSet::new).clone();
+                other_list.insert(name.clone());
+                adjacency_matrix.insert(other.clone(), other_list);
+            }
+
+            adjacency_matrix.insert(name.clone(), current_list.clone());
+        }
+
+        adjacency_matrix
     });
 
-    to_writer_pretty(
-        std::fs::File::create("graph2_sorted.ron").unwrap(),
-        &graph2_sorted,
-        Default::default(),
-    )
-    .unwrap();
+    let sorted_undirected_graph = time_it!("sorting the undirected graph by number of entries" => {
+        let mut list = undirected_graph.iter().map(|(k, v)| (k.clone(), v.clone())).collect::<Vec<_>>();
+        list.sort_by(|a, b| {
+            let (_, a) = a;
+            let (_, b) = b;
+            let a_len = a.len();
+            let b_len = b.len();
+            b_len.cmp(&a_len)
+        });
 
-    // let undirected_graph = time_it!("convert the directed graph into an undirected graph" => {
-    //     let mut adjacency_matrix = HashMap::new();
-    //     for (name, others) in graph2_sorted.iter() {
-    //         let mut current_list = adjacency_matrix.entry(name.clone()).or_insert_with(HashSet::new).clone();
-    //         for (other, _) in others.iter() {
-    //             current_list.insert(other.clone());
-    //         }
-    //
-    //         for other in current_list.iter() {
-    //             let mut other_list = adjacency_matrix.entry(other_name.clone()).or_insert_with(HashSet::new).clone();
-    //             other_list.insert(name.clone());
-    //             adjacency_matrix.insert(other_name.clone(), other_list);
-    //         }
-    //
-    //         adjacency_matrix.insert(name.clone(), current_list.clone());
-    //     }
-    //
-    //     adjacency_matrix
-    // });
-    //
-    // to_writer_pretty(
-    //     std::fs::File::create("undirected_graph.ron").unwrap(),
-    //     &undirected_graph,
-    //     Default::default(),
-    // )
-    // .unwrap();
+        list
+    });
+
+    time_it!("writing to sorted_undirected_graph.ron" =>
+        to_writer_pretty(
+            std::fs::File::create("sorted_undirected_graph.ron").unwrap(),
+            &sorted_undirected_graph,
+            Default::default(),
+        )
+        .unwrap()
+    );
 
     println!("\x07Total run time => {:?}", start.elapsed());
 }
@@ -171,15 +184,13 @@ pub fn get_uuid_of(display_name: String, pool: &SqlitePool) -> String {
         where display_name like ?
         and user_id is not ''";
 
-    let row = time_it!(format!("finding uuid of {}", &display_name) => {
-        smol::block_on(
-            async {
-                sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
-                    .bind(display_name.clone())
-                    .fetch_one(pool).await
-            }
-        ).unwrap()
-    });
+    let row = smol::block_on(async {
+        sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
+            .bind(display_name.clone())
+            .fetch_one(pool)
+            .await
+    })
+    .unwrap();
 
     if row.user_id.is_empty() {
         panic!("No user_id found for {}", display_name);
