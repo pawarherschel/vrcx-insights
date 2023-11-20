@@ -3,11 +3,9 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use async_compat::Compat;
-use indicatif::style::ProgressTracker;
 use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
 use ron::ser::to_writer_pretty;
-use smol::prelude::*;
 use sqlx::SqlitePool;
 
 use vrcx_insights::time_it;
