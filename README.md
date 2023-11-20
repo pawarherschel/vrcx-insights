@@ -15,4 +15,5 @@ this is a simple program to find out the various friend circles which might exis
     4. your user id should look similar to `usr_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee`
 4. make a new file called `owner_id.txt` in the same directory as the executable
 5. paste the user id into the file
-6. check `sorted_undirected_graph.ron` to see the results
+6. run the executable
+7. check `sorted_undirected_graph.ron` to see the results
