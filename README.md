@@ -2,6 +2,9 @@
 
 this is a simple program to find out the various friend circles which might exist via the data collected by vrcx
 
+keep in mind that the program tries to use ALL your threads, so if you have a cpu with low number of threads then it
+will take a while to run. the amount of time it requires to run is also dependent on how big the database table is.
+
 ## Usage
 
 1. make a new folder called `db` in the same directory as the executable
