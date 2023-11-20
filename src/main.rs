@@ -21,15 +21,23 @@ static OWNER_ID: &str = include_str!("../owner_id.txt");
 fn main() {
     let start = Instant::now();
 
-    let conn = time_it!(at once | "establishing connection to database" => smol::block_on(async {establish_connection().await}));
+    let conn = time_it!(at once | "establishing connection to database" =>
+        smol::block_on(async {establish_connection().await})
+    );
 
     let cache = Arc::new(RwLock::new(HashMap::new()));
 
-    let latest_name = time_it!(at once | "getting latest name of owner" => get_display_name_for(OWNER_ID.into(), &conn, cache.clone()));
+    let latest_name = time_it!(at once | "getting latest name of owner" =>
+        get_display_name_for(OWNER_ID.into(), &conn, cache.clone())
+    );
 
-    let locations = time_it!(at once | "getting the locations the user was in" => get_locations_for(OWNER_ID.into(), &conn));
+    let locations = time_it!(at once | "getting the locations the user was in" =>
+        get_locations_for(OWNER_ID.into(), &conn)
+    );
 
-    let others = time_it!("finding out the other users the user has seen" => get_others_for(OWNER_ID.into(), &conn, locations, ));
+    let others = time_it!("finding out the other users the user has seen" =>
+        get_others_for(OWNER_ID.into(), &conn, locations)
+    );
 
     let others_names = time_it!(at once | "getting names for other users" => others
         .par_iter()
@@ -96,7 +104,11 @@ fn main() {
                     let percentage = *count as f64 / total as f64 * 100_f64;
                     let percentile = *count as f64 / max as f64 * 100_f64;
                     if percentile > 50_f64 || percentage > 5_f64 {
-                        Some((k.clone(), (*count, (percentage * 100_f64).round() / 100_f64, (percentile * 100_f64).round() / 100_f64)))
+                        Some((
+                            k.clone(),
+                            (*count, (percentage * 100_f64).round() / 100_f64,
+                            (percentile * 100_f64).round() / 100_f64)
+                        ))
                     } else {
                         None
                     }
@@ -108,7 +120,8 @@ fn main() {
                 Some((name.clone(), new_others))
             }
         })
-        .collect::<HashMap<String, HashMap<String, _>>>());
+        .collect::<HashMap<String, HashMap<String, _>>>()
+    );
 
     let mut graph2_sorted = time_it!(at once | "duplicating graph" => graph2
         .par_iter()
@@ -136,25 +149,32 @@ fn main() {
     let undirected_graph = time_it!("convert the directed graph into an undirected graph" => {
         let mut adjacency_matrix = HashMap::new();
         for (name, others) in graph2_sorted.iter() {
-            let mut current_list = adjacency_matrix.entry(name.clone()).or_insert_with(HashSet::new).clone();
+            let mut current_list = adjacency_matrix
+                .entry(name.clone())
+                .or_insert_with(HashSet::new)
+                .clone();
             for (other, _) in others.iter() {
                 current_list.insert(other.clone());
             }
 
             for other in current_list.iter() {
-                let mut other_list = adjacency_matrix.entry(other.clone()).or_insert_with(HashSet::new).clone();
+                let mut other_list = adjacency_matrix
+                    .entry(other.clone())
+                    .or_insert_with(HashSet::new)
+                    .clone();
                 other_list.insert(name.clone());
                 adjacency_matrix.insert(other.clone(), other_list);
             }
-
             adjacency_matrix.insert(name.clone(), current_list.clone());
         }
-
         adjacency_matrix
     });
 
     let sorted_undirected_graph = time_it!("sorting the undirected graph by number of entries" => {
-        let mut list = undirected_graph.iter().map(|(k, v)| (k.clone(), v.clone())).collect::<Vec<_>>();
+        let mut list = undirected_graph
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<Vec<_>>();
         list.sort_by(|a, b| {
             let (_, a) = a;
             let (_, b) = b;
@@ -162,7 +182,6 @@ fn main() {
             let b_len = b.len();
             b_len.cmp(&a_len)
         });
-
         list
     });
 
