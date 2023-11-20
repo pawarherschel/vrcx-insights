@@ -16,8 +16,7 @@ use vrcx_insights::zaphkiel::gamelog_join_leave::{GamelogJoinLeave, GamelogJoinL
 use vrcx_insights::zaphkiel::utils::get_pb;
 use vrcx_insights::zaphkiel::world_instance::WorldInstance;
 
-static OWNER_ID: &str = "usr_c2a23c47-1622-4b7a-90a4-b824fcaacc69";
-static OWNER_NAME: &str = "Kat Sakura";
+static OWNER_ID: &str = include_str!("../owner_id.txt");
 
 fn main() {
     let start = Instant::now();
