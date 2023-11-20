@@ -76,14 +76,17 @@ fn main() {
         graph.clone().write().unwrap().insert(latest_name, others);
     }));
 
-    time_it!("writing to graph.ron" =>
+    time_it!("writing to graph.ron" => {
+        if std::fs::metadata("graph.ron").is_ok() {
+            std::fs::remove_file("graph.ron").unwrap();
+        }
         to_writer_pretty(
             std::fs::File::create("graph.ron").unwrap(),
             &graph,
             Default::default(),
         )
         .unwrap()
-    );
+    });
 
     let graph2 = time_it!(at once | "filtering graph" => graph
         .clone()
@@ -137,14 +140,17 @@ fn main() {
         b_len.cmp(&a_len)
     }));
 
-    time_it!("writing to graph2_sorted.ron" =>
+    time_it!("writing to graph2_sorted.ron" => {
+        if std::fs::metadata("graph2_sorted.ron").is_ok() {
+            std::fs::remove_file("graph2_sorted.ron").unwrap();
+        }
         to_writer_pretty(
             std::fs::File::create("graph2_sorted.ron").unwrap(),
             &graph2_sorted,
             Default::default(),
         )
         .unwrap()
-    );
+    });
 
     let undirected_graph = time_it!("convert the directed graph into an undirected graph" => {
         let mut adjacency_matrix = HashMap::new();
@@ -185,14 +191,17 @@ fn main() {
         list
     });
 
-    time_it!("writing to sorted_undirected_graph.ron" =>
+    time_it!("writing to sorted_undirected_graph.ron" => {
+        if std::fs::metadata("sorted_undirected_graph.ron").is_ok() {
+            std::fs::remove_file("sorted_undirected_graph.ron").unwrap();
+        }
         to_writer_pretty(
             std::fs::File::create("sorted_undirected_graph.ron").unwrap(),
             &sorted_undirected_graph,
             Default::default(),
         )
         .unwrap()
-    );
+    });
 
     println!("\x07Total run time => {:?}", start.elapsed());
 }
