@@ -17,9 +17,6 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: dbg
-        run: echo ${{ github.event_name }} && pwd && ls -la
-
       - uses: actions/checkout@v3
       - uses: Swatinem/rust-cache@v2
       - name: Install mingw
@@ -45,4 +42,4 @@ jobs:
           files: '**/*.exe'
 
       - name: dbg
-        run: echo ${{ github.event_name }} && pwd && ls -la
+        run: pwd && ls -la && find . -name *.exe -exec echo {} \;
