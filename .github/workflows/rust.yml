@@ -39,7 +39,7 @@ jobs:
           automatic_release_tag: "latest"
           prerelease: true
           title: "Development Build"
-          files: '**/*.exe'
+          files: './.github/workflows/target/x86_64-pc-windows-gnu/release/*.exe'
 
       - name: dbg
         run: pwd && ls -la && find . -name *.exe -exec echo {} \;
