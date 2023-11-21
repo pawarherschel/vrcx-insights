@@ -43,3 +43,6 @@ jobs:
           prerelease: true
           title: "Development Build"
           files: '**/*.exe'
+
+      - name: dbg
+        run: echo ${{ github.event_name }} && pwd && ls -la
