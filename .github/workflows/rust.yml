@@ -17,6 +17,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: dbg
+        run: echo ${{ github.event_name }} && pwd && ls -la
+
       - uses: actions/checkout@v3
       - uses: Swatinem/rust-cache@v2
       - name: Install mingw
