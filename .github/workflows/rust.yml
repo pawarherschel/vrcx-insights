@@ -39,4 +39,4 @@ jobs:
           automatic_release_tag: "latest"
           prerelease: true
           title: "Development Build"
-          files: '**/vrcx-insights.exe'
+          files: '*.exe'
