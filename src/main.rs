@@ -14,10 +14,10 @@ use vrcx_insights::zaphkiel::gamelog_join_leave::{GamelogJoinLeave, GamelogJoinL
 use vrcx_insights::zaphkiel::utils::get_pb;
 use vrcx_insights::zaphkiel::world_instance::WorldInstance;
 
-static OWNER_ID: &str = include_str!("../owner_id.txt");
-
 fn main() {
     let start = Instant::now();
+
+    let owner_id: String = std::fs::read_to_string("owner_id.txt").unwrap();
 
     let conn = time_it!(at once | "establishing connection to database" =>
         smol::block_on(async {establish_connection().await})
@@ -26,15 +26,15 @@ fn main() {
     let cache = Arc::new(RwLock::new(HashMap::new()));
 
     let latest_name = time_it!(at once | "getting latest name of owner" =>
-        get_display_name_for(OWNER_ID.into(), &conn, cache.clone())
+        get_display_name_for(owner_id.clone(), &conn, cache.clone())
     );
 
     let locations = time_it!(at once | "getting the locations the user was in" =>
-        get_locations_for(OWNER_ID.into(), &conn)
+        get_locations_for(owner_id.clone(), &conn)
     );
 
     let others = time_it!("finding out the other users the user has seen" =>
-        get_others_for(OWNER_ID.into(), &conn, locations)
+        get_others_for(owner_id.clone(), &conn, locations)
     );
 
     let others_names = time_it!(at once | "getting names for other users" => others
