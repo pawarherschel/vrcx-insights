@@ -19,12 +19,14 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: Swatinem/rust-cache@v2
+      - name: Install mingw
+        run: apt install mingw-w64
       - name: Install x86_64-pc-windows-gnu
         run: rustup target add x86_64-pc-windows-gnu
       - name: Install x86_64-pc-windows-msvc
         run: rustup target add x86_64-pc-windows-msvc
       - name: Build
-        run: cargo build --verbose --release --target x86_64-pc-windows-gnu
+        run: cargo build --verbose --release --linker x86_64-w64-mingw32-gcc --target x86_64-pc-windows-gnu
       - name: 'Upload Artifact'
         uses: actions/upload-artifact@v2
         with:
