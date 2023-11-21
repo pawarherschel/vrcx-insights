@@ -28,5 +28,5 @@ jobs:
           path: target/release/${{ env.PROJECT_NAME_UNDERSCORE }}
       - uses: ncipollo/release-action@v1
         with:
-          artifacts: "./target/release/${{ env.PROJECT_NAME_UNDERSCORE }}.exe"
-          tag: "tag"
+          artifacts: "/target/release/${{ env.PROJECT_NAME_UNDERSCORE }}.exe"
+          tag: "latest"
