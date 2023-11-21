@@ -85,3 +85,9 @@ the information is in form
 /// The schema is a map of Users to maps of other users and the number of times they appeared
 type Schema = HashMap<String, HashMap<String, u32>>;
 ```
+
+## How does it work?
+
+i just made up the heuristic that if percentage > 0.05 or percentile > 0.5 then theyre friends lol
+
+(someone please make the heuristic better)
