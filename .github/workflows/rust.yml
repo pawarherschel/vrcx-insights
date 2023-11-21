@@ -32,4 +32,4 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: vrcx-insights.exe
-          path: '**/*.exe'
+          path: '.github\workflows\target\x86_64-pc-windows-gnu\release\vrcx-insights.exe'
