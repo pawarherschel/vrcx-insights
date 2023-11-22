@@ -23,6 +23,12 @@ fn main() {
         smol::block_on(async {establish_connection().await})
     );
 
+    let owner_name = get_display_name_for(
+        owner_id.clone(),
+        &conn,
+        Arc::new(RwLock::new(HashMap::new())),
+    );
+
     let cache = Arc::new(RwLock::new(HashMap::new()));
 
     let latest_name = time_it!(at once | "getting latest name of owner" =>
@@ -121,6 +127,12 @@ fn main() {
                 Some((name.clone(), new_others))
             }
         })
+        .map(|(name, others)| {
+            (name, others.into_iter().filter(|(name, _)| {
+                name.as_str() != owner_name.as_str() && name.as_str() != owner_id.as_str()
+            }).collect::<HashMap<String, (u32, f64, f64)>>())
+        })
+        .filter(|(_, others)| !others.is_empty())
         .collect::<HashMap<String, HashMap<String, _>>>()
     );
 
