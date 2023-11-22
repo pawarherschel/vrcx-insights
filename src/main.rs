@@ -8,8 +8,7 @@ use async_compat::Compat;
 use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
 use ron::ser::to_writer_pretty;
-use smol::io::AsyncReadExt;
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
 use vrcx_insights::time_it;
 use vrcx_insights::zaphkiel::db::establish_connection;
