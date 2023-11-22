@@ -246,43 +246,50 @@ pub fn get_display_name_for(
         return display_name.clone();
     }
 
-    let q = "select *
+    let q = "select display_name
         from gamelog_join_leave
         where user_id like ?
         order by created_at desc
         limit 1";
 
-    let name = smol::block_on(async {
-        sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
+    let MyStringLol(name) = smol::block_on(async {
+        sqlx::query_as::<_, MyStringLol>(q)
             .bind(user_id.clone())
             .fetch_one(pool)
             .await
     })
-    .unwrap()
-    .display_name;
+    .unwrap();
+
+    if name.is_empty() {
+        panic!("No display_name found for {}", user_id);
+    }
 
     cache.write().unwrap().insert(user_id, name.clone());
 
     name
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, sqlx::FromRow)]
+struct MyOptionalStringLol(Option<String>);
+
 pub fn get_locations_for(user_id: String, conn: &SqlitePool) -> HashSet<WorldInstance> {
-    let q = "select *
+    let q = "select location
         from gamelog_join_leave
         where user_id like ?";
 
     let rows = smol::block_on(async {
-        sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
+        sqlx::query_as::<_, MyOptionalStringLol>(q)
             .bind(user_id)
             .fetch_all(conn)
             .await
     })
     .unwrap();
 
-    rows.par_iter()
-        .cloned()
-        .map(|row| row.into())
-        .filter_map(|row: GamelogJoinLeave| row.location)
+    rows.into_par_iter()
+        .filter_map(|row| {
+            row.0
+                .map(|location| location.parse::<WorldInstance>().unwrap())
+        })
         .collect()
 }
 
@@ -296,32 +303,30 @@ pub fn get_others_for(
         .map(|location| {
             let q = "select *
                     from gamelog_join_leave
-                    where location like ?";
+                    where location like ?
+                    and location != ''
+                    and user_id != ?
+                    and user_id is not ''";
 
             let prefix = location.get_prefix();
-            let location = format!("%{}%", prefix);
+            let location = format!("{}%", prefix);
 
             let rows = smol::block_on(Compat::new(async {
                 sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
                     .bind(location)
+                    .bind(user_id.clone())
                     .fetch_all(conn)
                     .await
             }))
             .unwrap();
 
             let rows = rows
-                .par_iter()
-                .cloned()
+                .into_par_iter()
                 .map(|row| row.into())
                 .collect::<Vec<GamelogJoinLeave>>();
 
-            rows.par_iter()
-                .filter(|row| {
-                    row.location.is_some()
-                        && row.user_id.is_some()
-                        && row.user_id.clone().unwrap() != user_id
-                })
-                .map(|row| row.user_id.clone().unwrap().clone())
+            rows.into_par_iter()
+                .map(|row| row.user_id.unwrap())
                 .collect::<HashSet<_>>()
         })
         .filter(|other| !other.is_empty())
@@ -329,8 +334,8 @@ pub fn get_others_for(
 
     let mut everyone_else = HashMap::new();
 
-    others.iter().for_each(|other| {
-        other.iter().cloned().for_each(|user_id| {
+    others.into_iter().for_each(|other| {
+        other.into_iter().for_each(|user_id| {
             let old = everyone_else.get(&user_id).unwrap_or(&0_u32);
             everyone_else.insert(user_id, old + 1);
         });
