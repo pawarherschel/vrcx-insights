@@ -1,3 +1,5 @@
+extern crate core;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -6,7 +8,8 @@ use async_compat::Compat;
 use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
 use ron::ser::to_writer_pretty;
-use sqlx::SqlitePool;
+use smol::io::AsyncReadExt;
+use sqlx::{Row, SqlitePool};
 
 use vrcx_insights::time_it;
 use vrcx_insights::zaphkiel::db::establish_connection;
@@ -23,7 +26,7 @@ fn main() {
         smol::block_on(async {establish_connection().await})
     );
 
-    let owner_name = get_display_name_for(
+    let _owner_name = get_display_name_for(
         owner_id.clone(),
         &conn,
         Arc::new(RwLock::new(HashMap::new())),
@@ -106,7 +109,7 @@ fn main() {
             let total = others.values().sum::<u32>();
             let max = *others.values().max().unwrap() + 1;
             let new_others = others
-                .par_iter()
+                .into_par_iter()
                 .filter_map(|(k, count)| {
                     let percentage = *count as f64 / total as f64 * 100_f64;
                     let percentile = *count as f64 / max as f64 * 100_f64;
@@ -127,12 +130,6 @@ fn main() {
                 Some((name.clone(), new_others))
             }
         })
-        .map(|(name, others)| {
-            (name, others.into_iter().filter(|(name, _)| {
-                name.as_str() != owner_name.as_str() && name.as_str() != owner_id.as_str()
-            }).collect::<HashMap<String, (u32, f64, f64)>>())
-        })
-        .filter(|(_, others)| !others.is_empty())
         .collect::<HashMap<String, HashMap<String, _>>>()
     );
 
@@ -246,50 +243,43 @@ pub fn get_display_name_for(
         return display_name.clone();
     }
 
-    let q = "select display_name
+    let q = "select *
         from gamelog_join_leave
         where user_id like ?
         order by created_at desc
         limit 1";
 
-    let MyStringLol(name) = smol::block_on(async {
-        sqlx::query_as::<_, MyStringLol>(q)
+    let name = smol::block_on(async {
+        sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
             .bind(user_id.clone())
             .fetch_one(pool)
             .await
     })
-    .unwrap();
-
-    if name.is_empty() {
-        panic!("No display_name found for {}", user_id);
-    }
+    .unwrap()
+    .display_name;
 
     cache.write().unwrap().insert(user_id, name.clone());
 
     name
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, sqlx::FromRow)]
-struct MyOptionalStringLol(Option<String>);
-
 pub fn get_locations_for(user_id: String, conn: &SqlitePool) -> HashSet<WorldInstance> {
-    let q = "select location
+    let q = "select *
         from gamelog_join_leave
         where user_id like ?";
 
     let rows = smol::block_on(async {
-        sqlx::query_as::<_, MyOptionalStringLol>(q)
+        sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
             .bind(user_id)
             .fetch_all(conn)
             .await
     })
     .unwrap();
 
-    rows.into_par_iter()
-        .filter_map(|row| {
-            row.0
-                .map(|location| location.parse::<WorldInstance>().unwrap())
-        })
+    rows.par_iter()
+        .cloned()
+        .map(|row| row.into())
+        .filter_map(|row: GamelogJoinLeave| row.location)
         .collect()
 }
 
@@ -300,6 +290,7 @@ pub fn get_others_for(
 ) -> HashMap<String, u32> {
     let others = locations
         .par_iter()
+        // .progress_with(get_pb(locations.len() as u64, "Getting others"))
         .map(|location| {
             let q = "select *
                     from gamelog_join_leave
