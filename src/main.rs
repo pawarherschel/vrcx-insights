@@ -7,7 +7,7 @@ use std::time::Instant;
 use async_compat::Compat;
 use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
-use ron::ser::to_writer_pretty;
+use ron::ser::{to_writer_pretty, PrettyConfig};
 use sqlx::SqlitePool;
 
 use vrcx_insights::time_it;
@@ -16,6 +16,7 @@ use vrcx_insights::zaphkiel::gamelog_join_leave::{GamelogJoinLeave, GamelogJoinL
 use vrcx_insights::zaphkiel::utils::get_pb;
 use vrcx_insights::zaphkiel::world_instance::WorldInstance;
 
+#[allow(clippy::too_many_lines)]
 fn main() {
     let start = Instant::now();
 
@@ -42,7 +43,7 @@ fn main() {
     );
 
     let others = time_it!("finding out the other users the user has seen" =>
-        get_others_for(owner_id.clone(), &conn, locations)
+        get_others_for(owner_id, &conn, locations)
     );
 
     let others_names = time_it!(at once | "getting names for other users" => others
@@ -57,11 +58,7 @@ fn main() {
         .collect::<HashMap<_, _>>());
 
     let graph = Arc::new(RwLock::new(HashMap::new()));
-    graph
-        .clone()
-        .write()
-        .unwrap()
-        .insert(latest_name.clone(), others_names.clone());
+    graph.write().unwrap().insert(latest_name, others_names);
 
     time_it!(at once | "generating the graph" => others
     .par_iter()
@@ -89,13 +86,13 @@ fn main() {
         to_writer_pretty(
             std::fs::File::create("graph.ron").unwrap(),
             &graph,
-            Default::default(),
+            PrettyConfig::default(),
         )
-        .unwrap()
+        .unwrap();
     });
 
     let graph2 = time_it!(at once | "filtering graph" => graph
-        .clone()
+
         .read()
         .unwrap()
         .par_iter()
@@ -110,8 +107,8 @@ fn main() {
             let new_others = others
                 .into_par_iter()
                 .filter_map(|(k, count)| {
-                    let percentage = *count as f64 / total as f64 * 100_f64;
-                    let percentile = *count as f64 / max as f64 * 100_f64;
+                    let percentage = f64::from(*count) / f64::from(total) * 100_f64;
+                    let percentile = f64::from(*count) / f64::from(max) * 100_f64;
                     if percentile > 50_f64 || percentage > 5_f64 {
                         Some((
                             k.clone(),
@@ -153,23 +150,23 @@ fn main() {
         to_writer_pretty(
             std::fs::File::create("graph2_sorted.ron").unwrap(),
             &graph2_sorted,
-            Default::default(),
+            PrettyConfig::default(),
         )
-        .unwrap()
+        .unwrap();
     });
 
     let undirected_graph = time_it!("convert the directed graph into an undirected graph" => {
         let mut adjacency_matrix = HashMap::new();
-        for (name, others) in graph2_sorted.iter() {
+        for (name, others) in &graph2_sorted {
             let mut current_list = adjacency_matrix
                 .entry(name.clone())
                 .or_insert_with(HashSet::new)
                 .clone();
-            for (other, _) in others.iter() {
+            for other in others.keys() {
                 current_list.insert(other.clone());
             }
 
-            for other in current_list.iter() {
+            for other in &current_list {
                 let mut other_list = adjacency_matrix
                     .entry(other.clone())
                     .or_insert_with(HashSet::new)
@@ -204,14 +201,15 @@ fn main() {
         to_writer_pretty(
             std::fs::File::create("sorted_undirected_graph.ron").unwrap(),
             &sorted_undirected_graph,
-            Default::default(),
+            PrettyConfig::default(),
         )
-        .unwrap()
+        .unwrap();
     });
 
     println!("\x07Total run time => {:?}", start.elapsed());
 }
 
+#[must_use]
 pub fn get_uuid_of(display_name: String, pool: &SqlitePool) -> String {
     let q = "select *
         from gamelog_join_leave
@@ -226,9 +224,10 @@ pub fn get_uuid_of(display_name: String, pool: &SqlitePool) -> String {
     })
     .unwrap();
 
-    if row.user_id.is_empty() {
-        panic!("No user_id found for {}", display_name);
-    }
+    assert!(
+        !row.user_id.is_empty(),
+        "No user_id found for {display_name}"
+    );
 
     row.user_id
 }
@@ -262,6 +261,7 @@ pub fn get_display_name_for(
     name
 }
 
+#[must_use]
 pub fn get_locations_for(user_id: String, conn: &SqlitePool) -> HashSet<WorldInstance> {
     let q = "select *
         from gamelog_join_leave
@@ -277,11 +277,12 @@ pub fn get_locations_for(user_id: String, conn: &SqlitePool) -> HashSet<WorldIns
 
     rows.par_iter()
         .cloned()
-        .map(|row| row.into())
+        .map(std::convert::Into::into)
         .filter_map(|row: GamelogJoinLeave| row.location)
         .collect()
 }
 
+#[must_use]
 pub fn get_others_for(
     user_id: String,
     conn: &SqlitePool,
@@ -312,7 +313,7 @@ pub fn get_others_for(
 
             let rows = rows
                 .into_par_iter()
-                .map(|row| row.into())
+                .map(std::convert::Into::into)
                 .collect::<Vec<GamelogJoinLeave>>();
 
             rows.into_par_iter()
@@ -324,12 +325,12 @@ pub fn get_others_for(
 
     let mut everyone_else = HashMap::new();
 
-    others.into_iter().for_each(|other| {
-        other.into_iter().for_each(|user_id| {
+    for other in others {
+        for user_id in other {
             let old = everyone_else.get(&user_id).unwrap_or(&0_u32);
             everyone_else.insert(user_id, old + 1);
-        });
-    });
+        }
+    }
 
     everyone_else
 }
