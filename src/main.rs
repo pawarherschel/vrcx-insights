@@ -2,18 +2,15 @@ extern crate core;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::slice::SliceIndex;
-use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use async_compat::Compat;
+use dashmap::{DashMap, DashSet};
 use indicatif::ParallelProgressIterator;
-use leapfrog::LeapMap;
 use petgraph::dot::Config;
 use petgraph::Graph;
 use rayon::prelude::*;
 use ron::ser::{to_writer_pretty, PrettyConfig};
-use smol::io::AsyncReadExt;
 use sqlx::SqlitePool;
 
 use vrcx_insights::time_it;
@@ -32,16 +29,12 @@ fn main() {
         smol::block_on(async {establish_connection().await})
     );
 
-    let _owner_name = get_display_name_for(
-        owner_id.clone(),
-        &conn,
-        Arc::new(RwLock::new(HashMap::new())),
-    );
+    let _owner_name = get_display_name_for(owner_id.clone(), &conn, &DashMap::new());
 
-    let cache = LeapMap::new();
+    let cache = DashMap::new();
 
     let latest_name = time_it!(at once | "getting latest name of owner" =>
-        get_display_name_for(owner_id.clone(), &conn, cache)
+        get_display_name_for(owner_id.clone(), &conn, &cache)
     );
 
     let locations = time_it!(at once | "getting the locations the user was in" =>
@@ -55,37 +48,46 @@ fn main() {
     let others_names = time_it!(at once | "getting names for other users" => others
         .par_iter()
         .progress_with(get_pb(others.len() as u64, "Getting names"))
-        .map(|(user_id, count)| {
+        .map(|it| {
+                let user_id = it.key();
+                let count = it.value();
             (
-                get_display_name_for(user_id.clone(), &conn, cache.clone()),
+                get_display_name_for(user_id.clone(), &conn, &cache),
                 *count,
             )
         })
-        .collect::<HashMap<_, _>>());
+        .collect::<DashMap<_, _>>());
 
-    let graph = Arc::new(RwLock::new(HashMap::new()));
-    graph.write().unwrap().insert(latest_name, others_names);
+    let graph = DashMap::new();
+    graph.insert(latest_name, others_names);
 
     time_it!(at once | "generating the graph" => others
     .par_iter()
     .progress_with(get_pb(others.len() as u64, "Generating graph"))
-    .for_each(|(user_id, _)| {
-        let latest_name = get_display_name_for(user_id.clone(), &conn, cache.clone());
+    .for_each(|it| {
+            let user_id = it.key();
+        let latest_name = get_display_name_for(user_id.clone(), &conn, &cache);
         let locations = get_locations_for(user_id.clone(), &conn);
         let others = get_others_for(user_id.clone(), &conn, locations);
         let others = others
             .par_iter()
-            .map(|(user_id, count)| {
+            .map(|it| {
+                let user_id = it.key();
+                let count = it.value();
                 (
-                    get_display_name_for(user_id.clone(), &conn, cache.clone()),
+                    get_display_name_for(user_id.clone(), &conn, &cache),
                     *count,
                 )
             })
-            .collect::<HashMap<_, _>>();
-        graph.clone().write().unwrap().insert(latest_name, others);
+            .collect::<DashMap<_, _>>();
+        graph.insert(latest_name, others);
     }));
 
     time_it!("writing to graph.ron" => {
+        let graph = graph.par_iter().map(|it| (it.key().to_owned(),
+            it.value().iter().map(|it|(it.key().to_owned(), it.value().to_owned())).collect::<HashMap<_,_>>()
+        )).collect::<HashMap<_,_>>();
+
         if std::fs::metadata("graph.ron").is_ok() {
             std::fs::remove_file("graph.ron").unwrap();
         }
@@ -96,56 +98,59 @@ fn main() {
         )
         .unwrap();
     });
-
-    let graph2 = time_it!(at once | "filtering graph" => graph
-
-        .read()
-        .unwrap()
-        .par_iter()
-        .progress_with(get_pb(
-            graph.read().unwrap().len() as u64,
-            "Filtering graph",
-        ))
-        .filter_map(|a| {
-            let (name, others) = a;
-            let total = others.values().sum::<u32>();
-            let max = *others.values().max().unwrap() + 1;
-            let new_others = others
-                .into_par_iter()
-                .filter_map(|(k, count)| {
-                    let percentage = f64::from(*count) / f64::from(total) * 100_f64;
-                    let percentile = f64::from(*count) / f64::from(max) * 100_f64;
-                    if percentile > 50_f64 || percentage > 5_f64 {
-                        Some((
-                            k.clone(),
-                            (*count, (percentage * 100_f64).round() / 100_f64,
-                            (percentile * 100_f64).round() / 100_f64)
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<HashMap<String, _>>();
-            if new_others.is_empty() {
-                None
-            } else {
-                Some((name.clone(), new_others))
-            }
-        })
-        .collect::<HashMap<String, HashMap<String, _>>>()
+    let graph2 = time_it!(at once | "filtering graph" =>
+        graph
+            .par_iter()
+            .progress_with(get_pb(graph.len() as u64, "Filtering graph"))
+            .filter_map(|it| {
+                let name = it.key();
+                let others = it.value();
+                let total = others.iter().map(|it| it.value().to_owned()).sum::<u32>();
+                let max = others.iter().map(|it| it.value().to_owned()).max().unwrap() + 1;
+                let new_others = others
+                    .into_par_iter()
+                    .filter_map(|it| {
+                        let k = it.key();
+                        let count = it.value();
+                        let percentage = f64::from(*count) / f64::from(total) * 100_f64;
+                        let percentile = f64::from(*count) / f64::from(max) * 100_f64;
+                        if percentile > 50_f64 || percentage > 5_f64 {
+                            Some((
+                                k.clone(),
+                                (
+                                    *count,
+                                    (percentage * 100_f64).round() / 100_f64,
+                                    (percentile * 100_f64).round() / 100_f64,
+                                ),
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<DashMap<String, _>>();
+                if new_others.is_empty() {
+                    None
+                } else {
+                    Some((name.clone(), new_others))
+                }
+            })
+            .collect::<DashMap<String, DashMap<String, _>>>()
     );
 
     let mut graph2_sorted = time_it!(at once | "duplicating graph" => graph2
         .par_iter()
         .progress_with(get_pb(graph2.len() as u64, "duplicating graph"))
-        .map(|(k, v)| (k.clone(), v.clone()))
+        .map(|it|{
+            let k = it.key();
+            let v = it.value().iter().map(|it| (it.key().to_owned(), it.value().to_owned())).collect::<HashMap<_,_>>();
+            (k.clone(), v.clone())})
         .collect::<Vec<_>>());
 
     time_it!("sorting graph by weighing adjacency list" => graph2_sorted.sort_by(|a, b| {
         let (_, a) = a;
         let (_, b) = b;
-        let a_len = a.iter().map(|(_, (count, _, _))| count).sum::<u32>();
-        let b_len = b.iter().map(|(_, (count, _, _))| count).sum::<u32>();
+        let a_len = a.iter().map(|it| it.1.0).sum::<u32>();
+        let b_len = b.iter().map(|it| it.1.0).sum::<u32>();
         b_len.cmp(&a_len)
     }));
 
@@ -162,20 +167,20 @@ fn main() {
     });
 
     let undirected_graph = time_it!("convert the directed graph into an undirected graph" => {
-        let mut adjacency_matrix = HashMap::new();
+        let adjacency_matrix = DashMap::new();
         for (name, others) in &graph2_sorted {
-            let mut current_list = adjacency_matrix
+            let current_list = adjacency_matrix
                 .entry(name.clone())
-                .or_insert_with(HashSet::new)
+                .or_insert_with(DashSet::new)
                 .clone();
             for other in others.keys() {
                 current_list.insert(other.clone());
             }
 
-            for other in &current_list {
-                let mut other_list = adjacency_matrix
+            for other in current_list.clone() {
+                let other_list = adjacency_matrix
                     .entry(other.clone())
-                    .or_insert_with(HashSet::new)
+                    .or_insert_with(DashSet::new)
                     .clone();
                 other_list.insert(name.clone());
                 adjacency_matrix.insert(other.clone(), other_list);
@@ -188,7 +193,9 @@ fn main() {
     let sorted_undirected_graph = time_it!("sorting the undirected graph by number of entries" => {
         let mut list = undirected_graph
             .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|it| (it.key().clone(),
+            it.value().iter().map(|it| it.key().to_owned()).collect::<HashSet<_>>()
+        ))
             .collect::<Vec<_>>();
         list.sort_by(|a, b| {
             let (_, a) = a;
@@ -213,9 +220,9 @@ fn main() {
     });
 
     let mut petgraph = Graph::new();
-    let mut dot_idxs = HashMap::new();
+    let dot_idxs = DashMap::new();
 
-    time_it! {"converting from hashmap to petgraph" =>
+    time_it! {"converting from DashMap to petgraph" =>
         for (node, edges) in graph2_sorted {
             // if node == "Kat Sakura" {
             //     continue;
@@ -282,9 +289,9 @@ pub fn get_uuid_of(display_name: String, pool: &SqlitePool) -> String {
 pub fn get_display_name_for(
     user_id: String,
     pool: &SqlitePool,
-    cache: LeapMap<String, V>,
+    cache: &DashMap<String, String>,
 ) -> String {
-    if let Some(display_name) = cache.read().unwrap().get(&user_id) {
+    if let Some(display_name) = cache.get(&user_id) {
         return display_name.clone();
     }
 
@@ -303,13 +310,13 @@ pub fn get_display_name_for(
     .unwrap()
     .display_name;
 
-    cache.write().unwrap().insert(user_id, name.clone());
+    cache.insert(user_id, name.clone());
 
     name
 }
 
 #[must_use]
-pub fn get_locations_for(user_id: String, conn: &SqlitePool) -> HashSet<WorldInstance> {
+pub fn get_locations_for(user_id: String, conn: &SqlitePool) -> DashSet<WorldInstance> {
     let q = "select *
         from gamelog_join_leave
         where user_id like ?";
@@ -333,8 +340,8 @@ pub fn get_locations_for(user_id: String, conn: &SqlitePool) -> HashSet<WorldIns
 pub fn get_others_for(
     user_id: String,
     conn: &SqlitePool,
-    locations: HashSet<WorldInstance>,
-) -> HashMap<String, u32> {
+    locations: DashSet<WorldInstance>,
+) -> DashMap<String, u32> {
     let others = locations
         .par_iter()
         // .progress_with(get_pb(locations.len() as u64, "Getting others"))
@@ -365,16 +372,18 @@ pub fn get_others_for(
 
             rows.into_par_iter()
                 .map(|row| row.user_id.unwrap())
-                .collect::<HashSet<_>>()
+                .collect::<DashSet<_>>()
         })
         .filter(|other| !other.is_empty())
         .collect::<Vec<_>>();
 
-    let mut everyone_else = HashMap::new();
+    let everyone_else: DashMap<String, u32> = DashMap::new();
 
     for other in others {
         for user_id in other {
-            let old = everyone_else.get(&user_id).unwrap_or(&0_u32);
+            let old = everyone_else
+                .get(&user_id)
+                .map_or(0_u32, |found| found.value().to_owned());
             everyone_else.insert(user_id, old + 1);
         }
     }
