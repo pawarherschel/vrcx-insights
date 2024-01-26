@@ -5,3 +5,8 @@ graph2_sorted.ron
 owner_id.txt
 owner_name.txt
 sorted_undirected_graph.ron
+dots/
+graphs/
+!dots/boop
+dot_edge_no_label.dot
+dot_edge_with_label.dot

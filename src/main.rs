@@ -1,11 +1,14 @@
 extern crate core;
 
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use async_compat::Compat;
 use indicatif::ParallelProgressIterator;
+use petgraph::dot::Config;
+use petgraph::Graph;
 use rayon::prelude::*;
 use ron::ser::{to_writer_pretty, PrettyConfig};
 use sqlx::SqlitePool;
@@ -18,6 +21,41 @@ use vrcx_insights::zaphkiel::world_instance::WorldInstance;
 
 #[allow(clippy::too_many_lines)]
 fn main() {
+    // let mut map = HashMap::new();
+    // map.insert("A", vec!["B", "C", "D"]);
+    // map.insert("B", vec!["A", "C"]);
+    // map.insert("C", vec!["A", "E"]);
+    // map.insert("D", vec!["A"]);
+    // map.insert("F", vec![]);
+    //
+    // let mut deps = UnGraph::new_undirected();
+    // let mut deps_idxs = HashMap::new();
+    // for node in map.keys() {
+    //     let idx = deps.add_node(node.to_owned());
+    //     deps_idxs.insert(node.to_owned(), idx);
+    // }
+    // for (node, edges) in map {
+    //     for edge in edges {
+    //         let Some(node_idx) = deps_idxs.get(node) else {
+    //             unreachable!()
+    //         };
+    //         let node_idx = node_idx.to_owned();
+    //         deps_idxs.entry(edge).or_insert_with(|| deps.add_node(edge));
+    //         let Some(edge_idx) = deps_idxs.get(edge) else {
+    //             unreachable!()
+    //         };
+    //         let edge_idx = edge_idx.to_owned();
+    //         deps.add_edge(node_idx, edge_idx, ());
+    //     }
+    // }
+    //
+    // println!(
+    //     "{:?}",
+    //     petgraph::dot::Dot::with_config(&deps, &[Config::EdgeNoLabel])
+    // );
+    //
+    // todo!();
+
     let start = Instant::now();
 
     let owner_id: String = std::fs::read_to_string("owner_id.txt").unwrap();
@@ -205,6 +243,47 @@ fn main() {
         )
         .unwrap();
     });
+
+    let mut petgraph = Graph::new();
+    let mut dot_idxs = HashMap::new();
+
+    time_it! {"converting from hashmap to petgraph" =>
+        for (node, edges) in graph2_sorted {
+            // if node == "Kat Sakura" {
+            //     continue;
+            // }
+
+            for (edge, weight) in edges {
+                // if edge == "Kat Sakura" {
+                //     continue;
+                // }
+
+                dot_idxs
+                    .entry(node.clone())
+                    .or_insert_with(|| petgraph.add_node(node.clone()));
+                let node_idx = dot_idxs.get(&node).unwrap().to_owned();
+
+                dot_idxs
+                    .entry(edge.clone())
+                    .or_insert_with(|| petgraph.add_node(edge.clone()));
+                let edge_idx = dot_idxs.get(&edge).unwrap().to_owned();
+
+                petgraph.add_edge(node_idx, edge_idx, weight);
+            }
+        }
+    }
+
+    let dot_edge_no_label = petgraph::dot::Dot::with_config(&petgraph, &[Config::EdgeNoLabel]);
+    let dot_edge_with_label = petgraph::dot::Dot::new(&petgraph);
+    time_it! { "writing dots" => {
+            fs::write("dot_edge_no_label.dot", format!("{dot_edge_no_label:?}")).unwrap();
+            fs::write(
+                "dot_edge_with_label.dot",
+                format!("{dot_edge_with_label:?}"),
+            )
+                .unwrap();
+        }
+    }
 
     println!("\x07Total run time => {:?}", start.elapsed());
 }
