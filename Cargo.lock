@@ -277,6 +277,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomic"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c59bdb34bc650a32731b31bd8f0829cc15d24a708ee31559e0bb34f2bc320cba"
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -980,6 +986,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 dependencies = [
  "spin 0.5.2",
+]
+
+[[package]]
+name = "leapfrog"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "150d31853d81784d0f848037a8c0168ae784809e3df63eb0d5b68aa0db0c76d0"
+dependencies = [
+ "atomic",
 ]
 
 [[package]]
@@ -2019,6 +2034,7 @@ version = "0.1.0"
 dependencies = [
  "async-compat",
  "indicatif",
+ "leapfrog",
  "petgraph",
  "rayon",
  "ron",

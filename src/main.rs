@@ -2,15 +2,18 @@ extern crate core;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::slice::SliceIndex;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use async_compat::Compat;
 use indicatif::ParallelProgressIterator;
+use leapfrog::LeapMap;
 use petgraph::dot::Config;
 use petgraph::Graph;
 use rayon::prelude::*;
 use ron::ser::{to_writer_pretty, PrettyConfig};
+use smol::io::AsyncReadExt;
 use sqlx::SqlitePool;
 
 use vrcx_insights::time_it;
@@ -35,10 +38,10 @@ fn main() {
         Arc::new(RwLock::new(HashMap::new())),
     );
 
-    let cache = Arc::new(RwLock::new(HashMap::new()));
+    let cache = LeapMap::new();
 
     let latest_name = time_it!(at once | "getting latest name of owner" =>
-        get_display_name_for(owner_id.clone(), &conn, cache.clone())
+        get_display_name_for(owner_id.clone(), &conn, cache)
     );
 
     let locations = time_it!(at once | "getting the locations the user was in" =>
@@ -279,7 +282,7 @@ pub fn get_uuid_of(display_name: String, pool: &SqlitePool) -> String {
 pub fn get_display_name_for(
     user_id: String,
     pool: &SqlitePool,
-    cache: Arc<RwLock<HashMap<String, String>>>,
+    cache: LeapMap<String, V>,
 ) -> String {
     if let Some(display_name) = cache.read().unwrap().get(&user_id) {
         return display_name.clone();
