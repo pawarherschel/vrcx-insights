@@ -5,31 +5,36 @@ use std::fs;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-use async_compat::Compat;
 use indicatif::ParallelProgressIterator;
 use petgraph::dot::Config;
 use petgraph::Graph;
 use rayon::prelude::*;
 use ron::ser::{to_writer_pretty, PrettyConfig};
-use sqlx::SqlitePool;
-
 use vrcx_insights::time_it;
 use vrcx_insights::zaphkiel::db::establish_connection;
-use vrcx_insights::zaphkiel::gamelog_join_leave::{GamelogJoinLeave, GamelogJoinLeaveRow};
+use vrcx_insights::zaphkiel::thingies::{get_display_name_for, get_locations_for, get_others_for};
 use vrcx_insights::zaphkiel::utils::get_pb;
-use vrcx_insights::zaphkiel::world_instance::WorldInstance;
 
 #[allow(clippy::too_many_lines)]
 fn main() {
     let start = Instant::now();
 
-    let owner_id: String = std::fs::read_to_string("owner_id.txt").unwrap();
+    let owner_id: String = fs::read_to_string("owner_id.txt")
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let keep_kat = fs::metadata(".keep_kat").is_ok();
+    println!("keep_kat: {keep_kat}");
+
+    let keep_owner = fs::metadata(".keep_owner").is_ok();
+    println!("keep_owner: {keep_owner}");
 
     let conn = time_it!(at once | "establishing connection to database" =>
         smol::block_on(async {establish_connection().await})
     );
 
-    let _owner_name = get_display_name_for(
+    let owner_name = get_display_name_for(
         owner_id.clone(),
         &conn,
         Arc::new(RwLock::new(HashMap::new())),
@@ -71,7 +76,7 @@ fn main() {
         let locations = get_locations_for(user_id.clone(), &conn);
         let others = get_others_for(user_id.clone(), &conn, locations);
         let others = others
-            .par_iter()
+            .iter()
             .map(|(user_id, count)| {
                 (
                     get_display_name_for(user_id.clone(), &conn, cache.clone()),
@@ -108,7 +113,7 @@ fn main() {
             let total = others.values().sum::<u32>();
             let max = *others.values().max().unwrap() + 1;
             let new_others = others
-                .into_par_iter()
+                .iter()
                 .filter_map(|(k, count)| {
                     let percentage = f64::from(*count) / f64::from(total) * 100_f64;
                     let percentile = f64::from(*count) / f64::from(max) * 100_f64;
@@ -214,14 +219,20 @@ fn main() {
 
     time_it! {"converting from hashmap to petgraph" =>
         for (node, edges) in graph2_sorted {
-            // if node == "Kat Sakura" {
-            //     continue;
-            // }
+            if node == "Kat Sakura" && !keep_kat{
+                continue;
+            }
+            if node == owner_name && !keep_owner {
+                continue;
+            }
 
             for (edge, weight) in edges {
-                // if edge == "Kat Sakura" {
-                //     continue;
-                // }
+                if edge == "Kat Sakura" && !keep_kat {
+                    continue;
+                }
+                if edge == owner_name && !keep_owner {
+                    continue;
+                }
 
                 dot_idxs
                     .entry(node.clone())
@@ -251,130 +262,4 @@ fn main() {
     }
 
     println!("\x07Total run time => {:?}", start.elapsed());
-}
-
-#[must_use]
-pub fn get_uuid_of(display_name: String, pool: &SqlitePool) -> String {
-    let q = "select *
-        from gamelog_join_leave
-        where display_name like ?
-        and user_id is not ''";
-
-    let row = smol::block_on(async {
-        sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
-            .bind(display_name.clone())
-            .fetch_one(pool)
-            .await
-    })
-    .unwrap();
-
-    assert!(
-        !row.user_id.is_empty(),
-        "No user_id found for {display_name}"
-    );
-
-    row.user_id
-}
-
-pub fn get_display_name_for(
-    user_id: String,
-    pool: &SqlitePool,
-    cache: Arc<RwLock<HashMap<String, String>>>,
-) -> String {
-    if let Some(display_name) = cache.read().unwrap().get(&user_id) {
-        return display_name.clone();
-    }
-
-    let q = "select *
-        from gamelog_join_leave
-        where user_id like ?
-        order by created_at desc
-        limit 1";
-
-    let name = smol::block_on(async {
-        sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
-            .bind(user_id.clone())
-            .fetch_one(pool)
-            .await
-    })
-    .unwrap()
-    .display_name;
-
-    cache.write().unwrap().insert(user_id, name.clone());
-
-    name
-}
-
-#[must_use]
-pub fn get_locations_for(user_id: String, conn: &SqlitePool) -> HashSet<WorldInstance> {
-    let q = "select *
-        from gamelog_join_leave
-        where user_id like ?";
-
-    let rows = smol::block_on(async {
-        sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
-            .bind(user_id)
-            .fetch_all(conn)
-            .await
-    })
-    .unwrap();
-
-    rows.par_iter()
-        .cloned()
-        .map(std::convert::Into::into)
-        .filter_map(|row: GamelogJoinLeave| row.location)
-        .collect()
-}
-
-#[must_use]
-pub fn get_others_for(
-    user_id: String,
-    conn: &SqlitePool,
-    locations: HashSet<WorldInstance>,
-) -> HashMap<String, u32> {
-    let others = locations
-        .par_iter()
-        // .progress_with(get_pb(locations.len() as u64, "Getting others"))
-        .map(|location| {
-            let q = "select *
-                    from gamelog_join_leave
-                    where location like ?
-                    and location != ''
-                    and user_id != ?
-                    and user_id is not ''";
-
-            let prefix = location.get_prefix();
-            let location = format!("{}%", prefix);
-
-            let rows = smol::block_on(Compat::new(async {
-                sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
-                    .bind(location)
-                    .bind(user_id.clone())
-                    .fetch_all(conn)
-                    .await
-            }))
-            .unwrap();
-
-            let rows = rows
-                .into_par_iter()
-                .map(std::convert::Into::into)
-                .collect::<Vec<GamelogJoinLeave>>();
-
-            rows.into_par_iter()
-                .map(|row| row.user_id.unwrap())
-                .collect::<HashSet<_>>()
-        })
-        .filter(|other| !other.is_empty())
-        .collect::<Vec<_>>();
-
-    let mut everyone_else = HashMap::new();
-
-    for other in others {
-        for user_id in other {
-            let old = everyone_else.get(&user_id).unwrap_or(&0_u32);
-            everyone_else.insert(user_id, old + 1);
-        }
-    }
-
-    everyone_else
 }
