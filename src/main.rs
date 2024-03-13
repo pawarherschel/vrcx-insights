@@ -1,16 +1,17 @@
+#![feature(lazy_cell)]
 extern crate core;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, LazyLock, mpsc, OnceLock, RwLock};
 use std::time::Instant;
 
 use async_compat::Compat;
-use indicatif::ParallelProgressIterator;
+use indicatif::ParallelProgressIterator as _;
 use petgraph::dot::Config;
 use petgraph::Graph;
 use rayon::prelude::*;
-use ron::ser::{to_writer_pretty, PrettyConfig};
+use ron::ser::{PrettyConfig, to_writer_pretty};
 use sqlx::SqlitePool;
 
 use vrcx_insights::time_it;
@@ -19,11 +20,18 @@ use vrcx_insights::zaphkiel::gamelog_join_leave::{GamelogJoinLeave, GamelogJoinL
 use vrcx_insights::zaphkiel::utils::get_pb;
 use vrcx_insights::zaphkiel::world_instance::WorldInstance;
 
+const KAT_ID: &str = "usr_c2a23c47-1622-4b7a-90a4-b824fcaacc69";
+static KAT_DISPLAY_NAME: OnceLock<String> = OnceLock::new();
+static KAT_EXISTS: LazyLock<bool> = LazyLock::new(|| fs::metadata(".kat").is_ok());
+
 #[allow(clippy::too_many_lines)]
 fn main() {
     let start = Instant::now();
 
-    let owner_id: String = std::fs::read_to_string("owner_id.txt").unwrap();
+    let owner_id: String = std::fs::read_to_string("owner_id.txt")
+        .unwrap()
+        .trim()
+        .to_string();
 
     let conn = time_it!(at once | "establishing connection to database" =>
         smol::block_on(async {establish_connection().await})
@@ -41,6 +49,8 @@ fn main() {
         get_display_name_for(owner_id.clone(), &conn, cache.clone())
     );
 
+    KAT_DISPLAY_NAME.set(get_display_name_for(KAT_ID.into(), &conn, cache.clone())).unwrap();
+
     let locations = time_it!(at once | "getting the locations the user was in" =>
         get_locations_for(owner_id.clone(), &conn)
     );
@@ -52,19 +62,25 @@ fn main() {
     let others_names = time_it!(at once | "getting names for other users" => others
         .par_iter()
         .progress_with(get_pb(others.len() as u64, "Getting names"))
+        .filter(|(it, _)| !(it.as_str() == KAT_ID && *KAT_EXISTS))
         .map(|(user_id, count)| {
             (
                 get_display_name_for(user_id.clone(), &conn, cache.clone()),
                 *count,
             )
         })
+        .filter(|(it, _)| !(it == KAT_DISPLAY_NAME.get().unwrap() && *KAT_EXISTS))
         .collect::<HashMap<_, _>>());
+
+    let others_names_len = others_names.len();
 
     let graph = Arc::new(RwLock::new(HashMap::new()));
     graph.write().unwrap().insert(latest_name, others_names);
 
-    time_it!(at once | "generating the graph" => others
-    .par_iter()
+    let (send, recv) = mpsc::channel();
+
+    time_it!(at once | "generating the graph" => others.clone()
+    .into_par_iter()
     .progress_with(get_pb(others.len() as u64, "Generating graph"))
     .for_each(|(user_id, _)| {
         let latest_name = get_display_name_for(user_id.clone(), &conn, cache.clone());
@@ -79,8 +95,32 @@ fn main() {
                 )
             })
             .collect::<HashMap<_, _>>();
-        graph.clone().write().unwrap().insert(latest_name, others);
+        if !(latest_name == *KAT_DISPLAY_NAME.get().unwrap() && *KAT_EXISTS) {
+            send.send((latest_name, others)).unwrap();
+        }
     }));
+
+    for _ in 0..others_names_len {
+        let got = recv.recv().unwrap();
+        graph.write().unwrap().insert(got.0, got.1);
+    }
+
+    let graph =
+        graph
+            .read()
+            .unwrap()
+            .par_iter()
+            .filter_map(|(node, edges)| {
+                if node == KAT_DISPLAY_NAME.get().unwrap() && *KAT_EXISTS {
+                    return None;
+                }
+                let edges = edges.iter().filter(|(edge, _)| !(*edge == KAT_DISPLAY_NAME.get().unwrap() && *KAT_EXISTS))
+                                 .map(|(edge, count)| (edge.to_owned(), count.to_owned()))
+                                 .collect::<HashMap<String, u32>>();
+                Some((node, edges))
+            })
+            .map(|(node, edges)| (node.to_owned(), edges.to_owned()))
+            .collect::<HashMap<String, HashMap<String, u32>>>();
 
     time_it!("writing to graph.ron" => {
         if std::fs::metadata("graph.ron").is_ok() {
@@ -95,12 +135,9 @@ fn main() {
     });
 
     let graph2 = time_it!(at once | "filtering graph" => graph
-
-        .read()
-        .unwrap()
         .par_iter()
         .progress_with(get_pb(
-            graph.read().unwrap().len() as u64,
+            graph.len() as u64,
             "Filtering graph",
         ))
         .filter_map(|a| {
@@ -112,15 +149,15 @@ fn main() {
                 .filter_map(|(k, count)| {
                     let percentage = f64::from(*count) / f64::from(total) * 100_f64;
                     let percentile = f64::from(*count) / f64::from(max) * 100_f64;
-                    if percentile > 50_f64 || percentage > 5_f64 {
+                    // if percentile > 50_f64 || percentage > 5_f64 {
                         Some((
                             k.clone(),
                             (*count, (percentage * 100_f64).round() / 100_f64,
                             (percentile * 100_f64).round() / 100_f64)
                         ))
-                    } else {
-                        None
-                    }
+                    // } else {
+                    //     None
+                    // }
                 })
                 .collect::<HashMap<String, _>>();
             if new_others.is_empty() {
@@ -214,14 +251,14 @@ fn main() {
 
     time_it! {"converting from hashmap to petgraph" =>
         for (node, edges) in graph2_sorted {
-            // if node == "Kat Sakura" {
-            //     continue;
-            // }
+            if node == KAT_DISPLAY_NAME.get().unwrap().as_str() && !*KAT_EXISTS {
+                continue;
+            }
 
             for (edge, weight) in edges {
-                // if edge == "Kat Sakura" {
-                //     continue;
-                // }
+                if edge == KAT_DISPLAY_NAME.get().unwrap().as_str() && !*KAT_EXISTS {
+                    continue;
+                }
 
                 dot_idxs
                     .entry(node.clone())
@@ -266,7 +303,7 @@ pub fn get_uuid_of(display_name: String, pool: &SqlitePool) -> String {
             .fetch_one(pool)
             .await
     })
-    .unwrap();
+        .unwrap();
 
     assert!(
         !row.user_id.is_empty(),
@@ -297,8 +334,8 @@ pub fn get_display_name_for(
             .fetch_one(pool)
             .await
     })
-    .unwrap()
-    .display_name;
+        .unwrap()
+        .display_name;
 
     cache.write().unwrap().insert(user_id, name.clone());
 
@@ -317,7 +354,7 @@ pub fn get_locations_for(user_id: String, conn: &SqlitePool) -> HashSet<WorldIns
             .fetch_all(conn)
             .await
     })
-    .unwrap();
+        .unwrap();
 
     rows.par_iter()
         .cloned()
@@ -333,6 +370,7 @@ pub fn get_others_for(
     locations: HashSet<WorldInstance>,
 ) -> HashMap<String, u32> {
     let others = locations
+        // .iter()
         .par_iter()
         // .progress_with(get_pb(locations.len() as u64, "Getting others"))
         .map(|location| {
@@ -353,7 +391,7 @@ pub fn get_others_for(
                     .fetch_all(conn)
                     .await
             }))
-            .unwrap();
+                .unwrap();
 
             let rows = rows
                 .into_par_iter()
@@ -362,6 +400,9 @@ pub fn get_others_for(
 
             rows.into_par_iter()
                 .map(|row| row.user_id.unwrap())
+                .filter(|it| {
+                    !(*KAT_EXISTS && it == KAT_DISPLAY_NAME.get().unwrap())
+                })
                 .collect::<HashSet<_>>()
         })
         .filter(|other| !other.is_empty())
