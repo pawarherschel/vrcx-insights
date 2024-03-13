@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use async_compat::Compat;
 use indicatif::ParallelProgressIterator as _;
+use indicatif::ProgressIterator as _;
 use petgraph::dot::Config;
 use petgraph::Graph;
 use rayon::prelude::*;
@@ -60,7 +61,7 @@ fn main() {
     );
 
     let others_names = time_it!(at once | "getting names for other users" => others
-        .par_iter()
+        .iter()
         .progress_with(get_pb(others.len() as u64, "Getting names"))
         .filter(|(it, _)| !(it.as_str() == KAT_ID && *KAT_EXISTS))
         .map(|(user_id, count)| {
@@ -80,7 +81,7 @@ fn main() {
     let (send, recv) = mpsc::channel();
 
     time_it!(at once | "generating the graph" => others.clone()
-    .into_par_iter()
+    .into_iter()
     .progress_with(get_pb(others.len() as u64, "Generating graph"))
     .for_each(|(user_id, _)| {
         let latest_name = get_display_name_for(user_id.clone(), &conn, cache.clone());
@@ -117,6 +118,9 @@ fn main() {
                 let edges = edges.iter().filter(|(edge, _)| !(*edge == KAT_DISPLAY_NAME.get().unwrap() && *KAT_EXISTS))
                                  .map(|(edge, count)| (edge.to_owned(), count.to_owned()))
                                  .collect::<HashMap<String, u32>>();
+                if edges.is_empty() {
+                    return None;
+                }
                 Some((node, edges))
             })
             .map(|(node, edges)| (node.to_owned(), edges.to_owned()))
@@ -356,8 +360,7 @@ pub fn get_locations_for(user_id: String, conn: &SqlitePool) -> HashSet<WorldIns
     })
         .unwrap();
 
-    rows.par_iter()
-        .cloned()
+    rows.into_par_iter()
         .map(std::convert::Into::into)
         .filter_map(|row: GamelogJoinLeave| row.location)
         .collect()
@@ -371,7 +374,7 @@ pub fn get_others_for(
 ) -> HashMap<String, u32> {
     let others = locations
         // .iter()
-        .par_iter()
+        .into_par_iter()
         // .progress_with(get_pb(locations.len() as u64, "Getting others"))
         .map(|location| {
             let q = "select *
