@@ -6,8 +6,9 @@ use std::hash::{Hash, Hasher};
 use std::ops::Index;
 use std::sync::Arc;
 
+use petgraph::visit::Walker;
+use serde::ser::{SerializeMap, SerializeStruct};
 use serde::{Serialize, Serializer};
-use serde::ser::SerializeStruct;
 
 pub type ArcStrSet<T> = ArcStrMap<T, ()>;
 
@@ -17,10 +18,10 @@ pub struct ArcStrMap<K, V> {
 }
 
 impl<K, V> Hash for ArcStrMap<K, V>
-    where
-        HashMap<K, V>: Hash,
-        K: Hash,
-        V: Hash,
+where
+    HashMap<K, V>: Hash,
+    K: Hash,
+    V: Hash,
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
         let map = &*self.map.clone();
@@ -29,8 +30,8 @@ impl<K, V> Hash for ArcStrMap<K, V>
 }
 
 impl<K, V> Clone for ArcStrMap<K, V>
-    where
-        K: Hash + PartialEq + Eq,
+where
+    K: Hash + PartialEq + Eq,
 {
     fn clone(&self) -> Self {
         let map = self.map.clone();
@@ -39,8 +40,8 @@ impl<K, V> Clone for ArcStrMap<K, V>
 }
 
 impl<K, V, const N: usize> From<[(K, V); N]> for ArcStrMap<K, V>
-    where
-        K: Eq + Hash + Into<Arc<str>>,
+where
+    K: Eq + Hash + Into<Arc<str>>,
 {
     fn from(value: [(K, V); N]) -> Self {
         let map = HashMap::from(value).into();
@@ -49,19 +50,19 @@ impl<K, V, const N: usize> From<[(K, V); N]> for ArcStrMap<K, V>
 }
 
 impl<K, V> FromIterator<(K, V)> for ArcStrMap<K, V>
-    where
-        K: Eq + Hash + Into<Arc<str>>,
+where
+    K: Eq + Hash + Into<Arc<str>>,
 {
-    fn from_iter<T: IntoIterator<Item=(K, V)>>(iter: T) -> Self {
+    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
         let map = HashMap::from_iter(iter).into();
         Self { map }
     }
 }
 
 impl<K, V> Index<&K> for ArcStrMap<K, V>
-    where
-        K: Eq + Hash + Into<Arc<str>>,
-        Arc<str>: std::borrow::Borrow<K>,
+where
+    K: Eq + Hash + Into<Arc<str>>,
+    Arc<str>: std::borrow::Borrow<K>,
 {
     type Output = V;
 
@@ -70,8 +71,7 @@ impl<K, V> Index<&K> for ArcStrMap<K, V>
     }
 }
 
-impl<K, V> ArcStrMap<K, V>
-{
+impl<K, V> ArcStrMap<K, V> {
     #[must_use]
     pub fn new_empty_arc_str() -> Self {
         let map = HashMap::new().into();
@@ -85,35 +85,40 @@ impl<K, V> ArcStrMap<K, V>
 }
 
 impl<K, V> ArcStrMap<K, V>
-    where
-        K: Eq + Hash + Into<Arc<str>> + Clone,
-        V: ToOwned<Owned=V> + Clone,
-        HashMap<K, V>: FromIterator<(<K as ToOwned>::Owned, <V as ToOwned>::Owned)>,
+where
+    K: Eq + Hash + Into<Arc<str>> + Clone,
+    V: ToOwned<Owned = V> + Clone,
+    HashMap<K, V>: FromIterator<(<K as ToOwned>::Owned, <V as ToOwned>::Owned)>,
 {
     #[inline]
     #[must_use]
     #[allow(clippy::should_implement_trait)]
-    pub fn into_iter(self) -> impl IntoIterator<Item=(<K as ToOwned>::Owned, <V as ToOwned>::Owned)> {
-        let it = self.map.iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect::<HashMap<K, V>>();
+    pub fn into_iter(
+        self,
+    ) -> impl IntoIterator<Item = (<K as ToOwned>::Owned, <V as ToOwned>::Owned)> {
+        let it = self
+            .map
+            .iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect::<HashMap<K, V>>();
         it.into_iter()
     }
 }
 
 impl<K, V> ArcStrMap<K, V> {
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item=(&K, &V)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
         self.map.iter()
     }
 }
 
 impl<K> ArcStrSet<K>
-    where
-        K: Eq + PartialEq + Hash,
+where
+    K: Eq + PartialEq + Hash,
 {
     #[inline]
     pub fn insert_set(&mut self, query: impl Into<K>) -> bool {
-        Arc::get_mut(&mut self.map)
-            .is_some_and(|it| it.insert(query.into(), ()).is_some())
+        Arc::get_mut(&mut self.map).is_some_and(|it| it.insert(query.into(), ()).is_some())
     }
 
     #[inline]
@@ -124,8 +129,8 @@ impl<K> ArcStrSet<K>
 }
 
 impl<K, V> ArcStrMap<K, V>
-    where
-        K: Eq + PartialEq + Hash,
+where
+    K: Eq + PartialEq + Hash,
 {
     #[inline]
     #[must_use]
@@ -152,13 +157,22 @@ impl<K, V> ArcStrMap<K, V>
 }
 
 impl<K, V> Serialize for ArcStrMap<K, V>
-    where
-        K: Serialize,
-        V: Serialize
+where
+    K: Serialize + AsRef<str>,
+    V: Serialize,
+    Arc<str>: for<'a> From<&'a K>,
 {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-        let mut s = serializer.serialize_struct("ArcStrMap", 1)?;
-        s.serialize_field("map", self.get_map())?;
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let map = self.iter().map(|(k, v)| (k.as_ref(), v));
+
+        let mut s = serializer.serialize_map(Some(self.len()))?;
+
+        for (k, v) in map {
+            s.serialize_entry(k, v)?;
+        }
         s.end()
     }
 }

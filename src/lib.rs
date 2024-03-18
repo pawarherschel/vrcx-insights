@@ -4,9 +4,9 @@ pub mod zaphkiel {
     pub mod group_access_type;
     pub mod join_leave_event;
     pub mod macros;
-    pub mod utils;
+    // pub mod utils;
+    pub mod cache;
     pub mod vertex;
     pub mod world_instance;
     pub mod world_regions;
-    pub mod cache;
 }
