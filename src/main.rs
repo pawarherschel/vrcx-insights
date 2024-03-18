@@ -1,180 +1,168 @@
 #![feature(lazy_cell)]
+#![feature(async_closure)]
 extern crate core;
 
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::sync::{Arc, LazyLock, mpsc, OnceLock, RwLock};
+use std::convert::Into;
+use std::hash::Hash;
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::Instant;
 
-use async_compat::Compat;
-use indicatif::ParallelProgressIterator as _;
-use indicatif::ProgressIterator as _;
+use indicatif::ProgressIterator;
 use petgraph::dot::Config;
 use petgraph::Graph;
-use rayon::prelude::*;
+use petgraph::visit::Walker as _;
 use ron::ser::{PrettyConfig, to_writer_pretty};
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use tokio::io::AsyncReadExt as _;
+use tokio::sync::mpsc;
 
 use vrcx_insights::time_it;
+use vrcx_insights::zaphkiel::cache::{ArcStrMap, ArcStrSet};
+// use vrcx_insights::time_it;
 use vrcx_insights::zaphkiel::db::establish_connection;
 use vrcx_insights::zaphkiel::gamelog_join_leave::{GamelogJoinLeave, GamelogJoinLeaveRow};
 use vrcx_insights::zaphkiel::utils::get_pb;
 use vrcx_insights::zaphkiel::world_instance::WorldInstance;
 
-const KAT_ID: &str = "usr_c2a23c47-1622-4b7a-90a4-b824fcaacc69";
-static KAT_DISPLAY_NAME: OnceLock<String> = OnceLock::new();
-static KAT_EXISTS: LazyLock<bool> = LazyLock::new(|| fs::metadata(".kat").is_ok());
+const KAT_ID: LazyLock<Id> = LazyLock::new(|| Id("usr_c2a23c47-1622-4b7a-90a4-b824fcaacc69".into()));
+static KAT_DISPLAY_NAME: OnceLock<Name> = OnceLock::new();
+static KAT_EXISTS: LazyLock<bool> = LazyLock::new(|| std::fs::metadata(".kat").is_ok());
+
 
 #[allow(clippy::too_many_lines)]
-fn main() {
+#[tokio::main(flavor = "multi_thread")]
+async fn main() {
     let start = Instant::now();
 
-    let owner_id: String = std::fs::read_to_string("owner_id.txt")
+    let owner_id: Id = std::fs::read_to_string("owner_id.txt")
         .unwrap()
         .trim()
-        .to_string();
+        .into();
 
-    let conn = time_it!(at once | "establishing connection to database" =>
-        smol::block_on(async {establish_connection().await})
-    );
+    let conn = establish_connection().await;
+
+    let cache = ArcStrMap::new_empty_arc_str();
 
     let _owner_name = get_display_name_for(
         owner_id.clone(),
         &conn,
-        Arc::new(RwLock::new(HashMap::new())),
+        cache.clone(),
     );
 
-    let cache = Arc::new(RwLock::new(HashMap::new()));
+    let latest_name = get_display_name_for(owner_id.clone(), &conn, cache.clone()).await;
 
-    let latest_name = time_it!(at once | "getting latest name of owner" =>
-        get_display_name_for(owner_id.clone(), &conn, cache.clone())
-    );
+    let locations = get_locations_for(owner_id.clone(), &conn).await;
 
-    KAT_DISPLAY_NAME.set(get_display_name_for(KAT_ID.into(), &conn, cache.clone())).unwrap();
+    let others = get_others_for(owner_id, &conn, locations).await;
 
-    let locations = time_it!(at once | "getting the locations the user was in" =>
-        get_locations_for(owner_id.clone(), &conn)
-    );
+    let mut others_names = ArcStrMap::new();
 
-    let others = time_it!("finding out the other users the user has seen" =>
-        get_others_for(owner_id, &conn, locations)
-    );
+    for (user_id, &count) in others.iter() {
+        if user_id.is_kat() {
+            continue;
+        }
 
-    let others_names = time_it!(at once | "getting names for other users" => others
-        .iter()
-        .progress_with(get_pb(others.len() as u64, "Getting names"))
-        .filter(|(it, _)| !(it.as_str() == KAT_ID && *KAT_EXISTS))
-        .map(|(user_id, count)| {
-            (
-                get_display_name_for(user_id.clone(), &conn, cache.clone()),
-                *count,
-            )
-        })
-        .filter(|(it, _)| !(it == KAT_DISPLAY_NAME.get().unwrap() && *KAT_EXISTS))
-        .collect::<HashMap<_, _>>());
+        let display_name = get_display_name_for(user_id.clone(), &conn, cache.clone()).await;
+
+        if display_name.is_kat() {
+            continue;
+        }
+
+        others_names.insert(display_name, count);
+    }
 
     let others_names_len = others_names.len();
 
-    let graph = Arc::new(RwLock::new(HashMap::new()));
-    graph.write().unwrap().insert(latest_name, others_names);
+    let mut graph: ArcStrMap<Name, ArcStrMap<Name, u32>> = ArcStrMap::new();
+    graph.insert(latest_name, others_names);
 
-    let (send, recv) = mpsc::channel();
+    let (send, mut recv) = mpsc::channel(others.len());
 
-    time_it!(at once | "generating the graph" => others.clone()
-    .into_iter()
-    .progress_with(get_pb(others.len() as u64, "Generating graph"))
-    .for_each(|(user_id, _)| {
-        let latest_name = get_display_name_for(user_id.clone(), &conn, cache.clone());
-        let locations = get_locations_for(user_id.clone(), &conn);
-        let others = get_others_for(user_id.clone(), &conn, locations);
-        let others = others
-            .par_iter()
-            .map(|(user_id, count)| {
-                (
-                    get_display_name_for(user_id.clone(), &conn, cache.clone()),
-                    *count,
-                )
-            })
-            .collect::<HashMap<_, _>>();
-        if !(latest_name == *KAT_DISPLAY_NAME.get().unwrap() && *KAT_EXISTS) {
-            send.send((latest_name, others)).unwrap();
+    for (user_id, _) in others.iter() {
+        let latest_name = get_display_name_for(user_id.clone(), &conn, cache.clone()).await;
+        let locations = get_locations_for(user_id.clone(), &conn).await;
+        let others = get_others_for(user_id.clone(), &conn, locations).await;
+
+        let mut others_name = ArcStrMap::new();
+        for (user_id, count) in others.iter() {
+            let name = get_display_name_for(user_id.clone(), &conn, cache.clone()).await;
+            others_name.insert(name, count.to_owned());
         }
-    }));
+
+        if !(latest_name.is_kat() && *KAT_EXISTS) {
+            send.send((latest_name, others_name)).await.unwrap();
+        }
+    }
 
     for _ in 0..others_names_len {
-        let got = recv.recv().unwrap();
-        graph.write().unwrap().insert(got.0, got.1);
+        let got = recv.recv().await.unwrap();
+        graph.insert(got.0, got.1);
     }
 
     let graph =
         graph
-            .read()
-            .unwrap()
-            .par_iter()
+            .iter()
             .filter_map(|(node, edges)| {
                 if node == KAT_DISPLAY_NAME.get().unwrap() && *KAT_EXISTS {
                     return None;
                 }
-                let edges = edges.iter().filter(|(edge, _)| !(*edge == KAT_DISPLAY_NAME.get().unwrap() && *KAT_EXISTS))
-                                 .map(|(edge, count)| (edge.to_owned(), count.to_owned()))
-                                 .collect::<HashMap<String, u32>>();
+                let edges =
+                    edges
+                        .iter()
+                        .filter(|(edge, _)| !(edge.is_kat() && *KAT_EXISTS))
+                        .map(|(edge, count)| (edge.to_owned(), count.to_owned()))
+                        .collect::<ArcStrMap<Name, u32>>();
                 if edges.is_empty() {
                     return None;
                 }
                 Some((node, edges))
             })
             .map(|(node, edges)| (node.to_owned(), edges.to_owned()))
-            .collect::<HashMap<String, HashMap<String, u32>>>();
+            .collect::<ArcStrMap<Name, ArcStrMap<Name, u32>>>();
 
-    time_it!("writing to graph.ron" => {
-        if std::fs::metadata("graph.ron").is_ok() {
-            std::fs::remove_file("graph.ron").unwrap();
-        }
-        to_writer_pretty(
-            std::fs::File::create("graph.ron").unwrap(),
-            &graph,
-            PrettyConfig::default(),
-        )
+    if std::fs::metadata("graph.ron").is_ok() {
+        std::fs::remove_file("graph.ron").unwrap();
+    }
+    to_writer_pretty(
+        std::fs::File::create("graph.ron").unwrap(),
+        &graph,
+        PrettyConfig::default(),
+    )
         .unwrap();
-    });
 
-    let graph2 = time_it!(at once | "filtering graph" => graph
-        .par_iter()
-        .progress_with(get_pb(
-            graph.len() as u64,
-            "Filtering graph",
-        ))
+    let graph2 = graph
+        .iter()
         .filter_map(|a| {
             let (name, others) = a;
             let total = others.values().sum::<u32>();
             let max = *others.values().max().unwrap() + 1;
             let new_others = others
-                .into_par_iter()
+                .iter()
                 .filter_map(|(k, count)| {
                     let percentage = f64::from(*count) / f64::from(total) * 100_f64;
                     let percentile = f64::from(*count) / f64::from(max) * 100_f64;
-                    // if percentile > 50_f64 || percentage > 5_f64 {
-                        Some((
-                            k.clone(),
-                            (*count, (percentage * 100_f64).round() / 100_f64,
-                            (percentile * 100_f64).round() / 100_f64)
-                        ))
-                    // } else {
-                    //     None
-                    // }
+                    Some((
+                        k.clone(),
+                        (
+                            *count,
+                            (percentage * 100_f64).round() / 100_f64,
+                            (percentile * 100_f64).round() / 100_f64
+                        )
+                    ))
                 })
-                .collect::<HashMap<String, _>>();
+                .collect::<ArcStrMap<Name, _>>();
             if new_others.is_empty() {
                 None
             } else {
                 Some((name.clone(), new_others))
             }
         })
-        .collect::<HashMap<String, HashMap<String, _>>>()
-    );
+        .collect::<ArcStrMap<Name, ArcStrMap<Name, _>>>();
 
     let mut graph2_sorted = time_it!(at once | "duplicating graph" => graph2
-        .par_iter()
+        .iter()
         .progress_with(get_pb(graph2.len() as u64, "duplicating graph"))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect::<Vec<_>>());
@@ -199,29 +187,40 @@ fn main() {
         .unwrap();
     });
 
-    let undirected_graph = time_it!("convert the directed graph into an undirected graph" => {
-        let mut adjacency_matrix = HashMap::new();
+    let undirected_graph = {
+        let mut adjacency_matrix: ArcStrMap<Name, ArcStrSet<Name>> = ArcStrMap::new();
         for (name, others) in &graph2_sorted {
-            let mut current_list = adjacency_matrix
-                .entry(name.clone())
-                .or_insert_with(HashSet::new)
-                .clone();
+            let mut current_list: ArcStrSet<Name> = {
+                match adjacency_matrix.get(name) {
+                    None => {
+                        let ret = ArcStrSet::new();
+                        adjacency_matrix.insert(name.clone(), ret.clone());
+                        ret
+                    }
+                    Some(set) => { set.clone() }
+                }
+            };
             for other in others.keys() {
-                current_list.insert(other.clone());
+                current_list.insert_set(other.clone());
             }
 
-            for other in &current_list {
-                let mut other_list = adjacency_matrix
-                    .entry(other.clone())
-                    .or_insert_with(HashSet::new)
-                    .clone();
-                other_list.insert(name.clone());
+            for other in current_list.keys() {
+                let mut other_list = match adjacency_matrix
+                    .get(other) {
+                    None => {
+                        let ret = ArcStrSet::new();
+                        adjacency_matrix.insert(other.clone(), ret.clone());
+                        ret
+                    }
+                    Some(ret) => { ret.clone() }
+                };
+                other_list.insert_set(name.clone());
                 adjacency_matrix.insert(other.clone(), other_list);
             }
             adjacency_matrix.insert(name.clone(), current_list.clone());
         }
         adjacency_matrix
-    });
+    };
 
     let sorted_undirected_graph = time_it!("sorting the undirected graph by number of entries" => {
         let mut list = undirected_graph
@@ -253,37 +252,35 @@ fn main() {
     let mut petgraph = Graph::new();
     let mut dot_idxs = HashMap::new();
 
-    time_it! {"converting from hashmap to petgraph" =>
-        for (node, edges) in graph2_sorted {
-            if node == KAT_DISPLAY_NAME.get().unwrap().as_str() && !*KAT_EXISTS {
+    for (node, edges) in graph2_sorted {
+        if node.is_kat() && !*KAT_EXISTS {
+            continue;
+        }
+
+        for (edge, weight) in edges.iter() {
+            if edge.is_kat() && !*KAT_EXISTS {
                 continue;
             }
 
-            for (edge, weight) in edges {
-                if edge == KAT_DISPLAY_NAME.get().unwrap().as_str() && !*KAT_EXISTS {
-                    continue;
-                }
+            dot_idxs
+                .entry(node.clone())
+                .or_insert_with(|| petgraph.add_node(node.clone()));
+            let node_idx = dot_idxs.get(&node).unwrap().to_owned();
 
-                dot_idxs
-                    .entry(node.clone())
-                    .or_insert_with(|| petgraph.add_node(node.clone()));
-                let node_idx = dot_idxs.get(&node).unwrap().to_owned();
+            dot_idxs
+                .entry(edge.clone())
+                .or_insert_with(|| petgraph.add_node(edge.clone()));
+            let edge_idx = dot_idxs.get(edge).unwrap().to_owned();
 
-                dot_idxs
-                    .entry(edge.clone())
-                    .or_insert_with(|| petgraph.add_node(edge.clone()));
-                let edge_idx = dot_idxs.get(&edge).unwrap().to_owned();
-
-                petgraph.add_edge(node_idx, edge_idx, weight);
-            }
+            petgraph.add_edge(node_idx, edge_idx, weight.to_owned());
         }
     }
 
     let dot_edge_no_label = petgraph::dot::Dot::with_config(&petgraph, &[Config::EdgeNoLabel]);
     let dot_edge_with_label = petgraph::dot::Dot::new(&petgraph);
     time_it! { "writing dots" => {
-            fs::write("dot_edge_no_label.dot", format!("{dot_edge_no_label:?}")).unwrap();
-            fs::write(
+            std::fs::write("dot_edge_no_label.dot", format!("{dot_edge_no_label:?}")).unwrap();
+            std::fs::write(
                 "dot_edge_with_label.dot",
                 format!("{dot_edge_with_label:?}"),
             )
@@ -294,36 +291,126 @@ fn main() {
     println!("\x07Total run time => {:?}", start.elapsed());
 }
 
+#[derive(Debug, Eq, PartialEq, Hash)]
+pub struct Id(Arc<str>);
+
+impl Clone for Id {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl ToString for Id {
+    fn to_string(&self) -> String {
+        self.0.to_string()
+    }
+}
+
+impl From<String> for Id {
+    fn from(value: String) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<Arc<str>> for Id {
+    fn from(value: Arc<str>) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&Arc<str>> for Id {
+    fn from(value: &Arc<str>) -> Self {
+        Self(value.clone())
+    }
+}
+
+impl From<&str> for Id {
+    fn from(value: &str) -> Self {
+        Self(value.into())
+    }
+}
+
+impl Into<Arc<str>> for Id {
+    fn into(self) -> Arc<str> {
+        self.0
+    }
+}
+
+impl Id {
+    pub fn is_kat(&self) -> bool {
+        *self == *KAT_ID
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
+pub struct Name(Arc<str>);
+
+impl Clone for Name {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl ToString for Name {
+    fn to_string(&self) -> String {
+        self.0.to_string()
+    }
+}
+
+impl From<String> for Name {
+    fn from(value: String) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<Arc<str>> for Name {
+    fn from(value: Arc<str>) -> Self {
+        Self(value)
+    }
+}
+
+impl Into<Arc<str>> for Name {
+    fn into(self) -> Arc<str> {
+        self.0
+    }
+}
+
+impl Name {
+    pub fn is_kat(&self) -> bool {
+        self == KAT_DISPLAY_NAME.get().unwrap()
+    }
+}
+
 #[must_use]
-pub fn get_uuid_of(display_name: String, pool: &SqlitePool) -> String {
+pub async fn get_uuid_of(display_name: Name, pool: &SqlitePool) -> Id {
     let q = "select *
         from gamelog_join_leave
         where display_name like ?
         and user_id is not ''";
 
-    let row = smol::block_on(async {
+    let row =
         sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
-            .bind(display_name.clone())
+            .bind(display_name.to_string())
             .fetch_one(pool)
             .await
-    })
-        .unwrap();
+            .unwrap();
 
     assert!(
         !row.user_id.is_empty(),
-        "No user_id found for {display_name}"
+        "No user_id found for {}", display_name.to_string()
     );
 
-    row.user_id
+    row.user_id.into()
 }
 
-pub fn get_display_name_for(
-    user_id: String,
+pub async fn get_display_name_for(
+    user_id: Id,
     pool: &SqlitePool,
-    cache: Arc<RwLock<HashMap<String, String>>>,
-) -> String {
-    if let Some(display_name) = cache.read().unwrap().get(&user_id) {
-        return display_name.clone();
+    mut cache: ArcStrMap<Id, Arc<str>>,
+) -> Name
+{
+    if let Some(display_name) = cache.get(&user_id.clone().into()) {
+        return display_name.clone().into();
     }
 
     let q = "select *
@@ -332,86 +419,84 @@ pub fn get_display_name_for(
         order by created_at desc
         limit 1";
 
-    let name = smol::block_on(async {
+    let name: String =
         sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
-            .bind(user_id.clone())
+            .bind(user_id.to_string())
             .fetch_one(pool)
             .await
-    })
-        .unwrap()
-        .display_name;
+            .unwrap()
+            .display_name;
 
-    cache.write().unwrap().insert(user_id, name.clone());
+    let name: Arc<str> = name.into();
 
-    name
+    cache.insert(user_id, name.clone());
+
+    name.into()
 }
 
 #[must_use]
-pub fn get_locations_for(user_id: String, conn: &SqlitePool) -> HashSet<WorldInstance> {
+pub async fn get_locations_for(user_id: Id, conn: &SqlitePool) -> HashSet<WorldInstance> {
     let q = "select *
         from gamelog_join_leave
         where user_id like ?";
 
-    let rows = smol::block_on(async {
+    let rows =
         sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
-            .bind(user_id)
+            .bind(user_id.to_string())
             .fetch_all(conn)
             .await
-    })
-        .unwrap();
+            .unwrap();
 
-    rows.into_par_iter()
+    rows.into_iter()
         .map(std::convert::Into::into)
         .filter_map(|row: GamelogJoinLeave| row.location)
         .collect()
 }
 
 #[must_use]
-pub fn get_others_for(
-    user_id: String,
+pub async fn get_others_for(
+    user_id: Id,
     conn: &SqlitePool,
     locations: HashSet<WorldInstance>,
-) -> HashMap<String, u32> {
-    let others = locations
-        // .iter()
-        .into_par_iter()
-        // .progress_with(get_pb(locations.len() as u64, "Getting others"))
-        .map(|location| {
-            let q = "select *
+) -> ArcStrMap<Id, u32> {
+    let mut others = vec![];
+    for location in locations {
+        let q = "select *
                     from gamelog_join_leave
                     where location like ?
                     and location != ''
                     and user_id != ?
                     and user_id is not ''";
 
-            let prefix = location.get_prefix();
-            let location = format!("{}%", prefix);
+        let prefix = location.get_prefix();
+        let location = format!("{}%", prefix);
 
-            let rows = smol::block_on(Compat::new(async {
-                sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
-                    .bind(location)
-                    .bind(user_id.clone())
-                    .fetch_all(conn)
-                    .await
-            }))
+        let rows =
+            sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
+                .bind(location)
+                .bind(user_id.to_string())
+                .fetch_all(conn)
+                .await
                 .unwrap();
 
-            let rows = rows
-                .into_par_iter()
-                .map(std::convert::Into::into)
-                .collect::<Vec<GamelogJoinLeave>>();
+        let rows = rows
+            .into_iter()
+            .map(std::convert::Into::into)
+            .collect::<Vec<GamelogJoinLeave>>();
 
-            rows.into_par_iter()
-                .map(|row| row.user_id.unwrap())
-                .filter(|it| {
-                    !(*KAT_EXISTS && it == KAT_DISPLAY_NAME.get().unwrap())
-                })
-                .collect::<HashSet<_>>()
-        })
-        .filter(|other| !other.is_empty())
-        .collect::<Vec<_>>();
+        let other = rows.into_iter()
+                        .map(|row| row.user_id.unwrap().into())
+                        .filter(|it: &Id| {
+                            !(*KAT_EXISTS && it.is_kat())
+                        })
+                        .collect::<HashSet<_>>();
 
-    let mut everyone_else = HashMap::new();
+        if !other.is_empty() {
+            others.push(other);
+        }
+    }
+
+    let mut everyone_else = ArcStrMap::new();
 
     for other in others {
         for user_id in other {
@@ -420,5 +505,5 @@ pub fn get_others_for(
         }
     }
 
-    everyone_else
+    everyone_else.into()
 }

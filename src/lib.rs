@@ -8,4 +8,5 @@ pub mod zaphkiel {
     pub mod vertex;
     pub mod world_instance;
     pub mod world_regions;
+    pub mod cache;
 }
