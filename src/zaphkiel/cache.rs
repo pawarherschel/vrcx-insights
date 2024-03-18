@@ -1,13 +1,10 @@
-#![feature(impl_trait_in_assoc_type)]
-
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::ops::Index;
 use std::sync::Arc;
 
-use petgraph::visit::Walker;
-use serde::ser::{SerializeMap, SerializeStruct};
+use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 
 pub type ArcStrSet<T> = ArcStrMap<T, ()>;
@@ -196,3 +193,12 @@ impl<K, V> ArcStrMap<K, V> {
         self.map.is_empty()
     }
 }
+
+// impl<K, V, KItem, VItem> FromIterator<(KItem, VItem)> for ArcStrMap<K, V>
+// where
+//     KItem: Into<K>,
+// {
+//     fn from_iter<T: IntoIterator<Item = A>>(iter: T) -> Self {
+//         todo!()
+//     }
+// }

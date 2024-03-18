@@ -1,6 +1,6 @@
 #![feature(lazy_cell)]
 #![feature(async_closure)]
-extern crate core;
+#![feature(let_chains)]
 
 use std::collections::{HashMap, HashSet};
 use std::convert::Into;
@@ -9,13 +9,13 @@ use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::Instant;
 
 use petgraph::dot::Config;
-use petgraph::visit::Walker as _;
+use petgraph::visit::Walker;
 use petgraph::Graph;
 use ron::ser::{to_writer_pretty, PrettyConfig};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use tokio::io::AsyncReadExt as _;
-use tokio::sync::mpsc;
+use tokio::task::JoinSet;
+use tokio::time::sleep;
 
 use vrcx_insights::zaphkiel::cache::{ArcStrMap, ArcStrSet};
 use vrcx_insights::zaphkiel::db::establish_connection;
@@ -30,97 +30,155 @@ static KAT_EXISTS: LazyLock<bool> = LazyLock::new(|| std::fs::metadata(".kat").i
 #[allow(clippy::too_many_lines)]
 #[tokio::main(flavor = "multi_thread", worker_threads = 15)]
 async fn main() {
+    // let mut set = JoinSet::new();
+    //
+    // for i in 0..10_usize {
+    //     set.spawn(async move {
+    //         sleep(tokio::time::Duration::from_secs(i as u64)).await;
+    //         i
+    //     });
+    // }
+    //
+    // let mut seen = [false; 10];
+    // while let Some(res) = set.join_next().await {
+    //     let idx = res.unwrap();
+    //     println!("{idx}");
+    //     seen[idx] = true;
+    // }
+    //
+    // for i in seen {
+    //     assert!(i);
+    // }
+    //
+    // println!("done");
+
     let start = Instant::now();
 
-    println!("{}", line!());
+    dbg!(start.elapsed());
     let owner_id: Id = std::fs::read_to_string("owner_id.txt")
         .unwrap()
         .trim()
         .into();
-    println!("{}", line!());
+    dbg!(start.elapsed());
 
     let conn = establish_connection().await;
+    let conn = Arc::new(conn);
 
     let cache = ArcStrMap::new_empty_arc_str();
 
-    println!("{}", line!());
-    let _owner_name = get_display_name_for(owner_id.clone(), &conn, cache.clone());
-    println!("{}", line!());
+    dbg!(start.elapsed());
+    let _owner_name = get_display_name_for(owner_id.clone(), conn.clone(), cache.clone());
+    dbg!(start.elapsed());
 
     KAT_DISPLAY_NAME
-        .set(get_display_name_for(KAT_ID.to_string().into(), &conn, cache.clone()).await)
+        .set(get_display_name_for(KAT_ID.to_string().into(), conn.clone(), cache.clone()).await)
         .unwrap();
 
-    println!("{}", line!());
-    let latest_name = get_display_name_for(owner_id.clone(), &conn, cache.clone()).await;
-    println!("{}", line!());
+    dbg!(start.elapsed());
+    let latest_name = get_display_name_for(owner_id.clone(), conn.clone(), cache.clone()).await;
+    dbg!(start.elapsed());
 
-    println!("{}", line!());
-    let locations = get_locations_for(owner_id.clone(), &conn).await;
-    println!("{}", line!());
+    dbg!(start.elapsed());
+    let locations = get_locations_for(owner_id.clone(), conn.clone()).await;
+    dbg!(start.elapsed());
 
-    println!("{}", line!());
-    let others = get_others_for(owner_id, &conn, locations).await;
-    println!("{}", line!());
+    dbg!(start.elapsed());
+    let others: ArcStrMap<Id, u32> = get_others_for(owner_id, conn.clone(), locations).await;
+    dbg!(start.elapsed());
 
-    println!("{}", line!());
+    dbg!(start.elapsed());
     let mut others_names = ArcStrMap::new();
-    println!("{}", line!());
+    dbg!(start.elapsed());
 
-    println!("{}", line!());
-    for (user_id, &count) in others.iter() {
-        if user_id.is_kat() {
-            continue;
-        }
+    dbg!(start.elapsed());
+    // let mut set = JoinSet::new();
+    let mut handles = JoinSet::new();
 
-        let display_name = get_display_name_for(user_id.clone(), &conn, cache.clone()).await;
+    // for i in 0..10_usize {
+    for (user_id, count) in others.clone().into_iter() {
+        let conn = conn.clone();
+        let cache = cache.clone();
+        // set.spawn(async move {
+        handles.spawn(async move {
+            if user_id.is_kat() {
+                println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!early exit");
+                return None;
+            }
+            // sleep(Duration::from_secs(i as u64)).await;
+            sleep(tokio::time::Duration::from_secs(10)).await;
+            let display_name = get_display_name_for(user_id, conn, cache).await;
+            println!("{}", display_name.to_string());
 
-        if display_name.is_kat() {
-            continue;
-        }
+            if display_name.is_kat() {
+                println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!early exit");
+                return None;
+            }
 
-        others_names.insert(display_name, count);
+            Some((display_name, count))
+        });
     }
-    println!("{}", line!());
+    dbg!(start.elapsed());
+
+    // while let Some(res) = set.join_next().await {
+    while let Some(res) = handles.join_next().await {
+        // let idx = res.unwrap();
+        let res = res.unwrap();
+        println!("{res:?}");
+        match res {
+            None => {}
+            Some((name, count)) => {
+                others_names.insert(name, count);
+            }
+        }
+    }
+    dbg!(start.elapsed());
+
+    dbg!(&others_names);
 
     let others_names_len = dbg! {others_names.len()};
 
     let mut graph: ArcStrMap<Name, ArcStrMap<Name, u32>> = ArcStrMap::new();
     graph.insert(latest_name, others_names);
 
-    let (send, mut recv) = mpsc::channel(others.len());
+    dbg!(start.elapsed());
+    let mut handles = JoinSet::new();
+    for (user_id, _) in others.clone().into_iter() {
+        let conn = conn.clone();
+        let cache = cache.clone();
+        let _ = handles.spawn(async move {
+            let latest_name =
+                get_display_name_for(user_id.clone(), conn.clone(), cache.clone()).await;
+            let locations = get_locations_for(user_id.clone(), conn.clone()).await;
+            let others = get_others_for(user_id.clone(), conn.clone(), locations).await;
 
-    println!("{}", line!());
-    for (idx, (user_id, _)) in others.iter().enumerate() {
-        dbg!(idx, others.len());
-        let latest_name = get_display_name_for(user_id.clone(), &conn, cache.clone()).await;
-        let locations = get_locations_for(user_id.clone(), &conn).await;
-        let others = get_others_for(user_id.clone(), &conn, locations).await;
+            let mut others_name = ArcStrMap::new();
+            for (user_id, count) in others.iter() {
+                let name = get_display_name_for(user_id.clone(), conn.clone(), cache.clone()).await;
+                others_name.insert(name, count.to_owned());
+            }
 
-        let mut others_name = ArcStrMap::new();
-        for (user_id, count) in others.iter() {
-            let name = get_display_name_for(user_id.clone(), &conn, cache.clone()).await;
-            others_name.insert(name, count.to_owned());
-        }
-
-        if !(latest_name.is_kat() && *KAT_EXISTS) {
-            send.send((latest_name, others_name)).await.unwrap();
-        }
+            if latest_name.is_kat() && *KAT_EXISTS {
+                None
+            } else {
+                Some((latest_name, others_name))
+            }
+        });
     }
-    println!("{}", line!());
+    dbg!(start.elapsed());
 
-    println!("{}", line!());
-    for _ in 0..others_names_len {
-        let got = recv.recv().await.unwrap();
-        graph.insert(got.0, got.1);
-    }
-    println!("{}", line!());
+    dbg!(start.elapsed());
+    handles.join_next().await.into_iter().for_each(|handle| {
+        let _ = handle
+            .unwrap()
+            .and_then(|(node, edges)| graph.insert(node, edges));
+    });
+    dbg!(start.elapsed());
 
-    println!("{}", line!());
+    dbg!(start.elapsed());
     let graph = graph
         .iter()
         .filter_map(|(node, edges)| {
-            if node == KAT_DISPLAY_NAME.get().unwrap() && *KAT_EXISTS {
+            if node.is_kat() && *KAT_EXISTS {
                 return None;
             }
             let edges = edges
@@ -135,7 +193,7 @@ async fn main() {
         })
         .map(|(node, edges)| (node.to_owned(), edges))
         .collect::<ArcStrMap<Name, ArcStrMap<Name, u32>>>();
-    println!("{}", line!());
+    dbg!(start.elapsed());
 
     if std::fs::metadata("graph.ron").is_ok() {
         std::fs::remove_file("graph.ron").unwrap();
@@ -424,7 +482,7 @@ pub async fn get_uuid_of(display_name: Name, pool: &SqlitePool) -> Id {
 
 pub async fn get_display_name_for(
     user_id: Id,
-    pool: &SqlitePool,
+    pool: Arc<SqlitePool>,
     mut cache: ArcStrMap<Id, Arc<str>>,
 ) -> Name {
     if let Some(display_name) = cache.get(&user_id) {
@@ -437,9 +495,11 @@ pub async fn get_display_name_for(
         order by created_at desc
         limit 1";
 
+    println!("{}", user_id.to_string());
+
     let name: String = sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
         .bind(user_id.to_string())
-        .fetch_one(pool)
+        .fetch_one(pool.as_ref())
         .await
         .unwrap()
         .display_name;
@@ -452,14 +512,14 @@ pub async fn get_display_name_for(
 }
 
 #[must_use]
-pub async fn get_locations_for(user_id: Id, conn: &SqlitePool) -> HashSet<WorldInstance> {
+pub async fn get_locations_for(user_id: Id, conn: Arc<SqlitePool>) -> HashSet<WorldInstance> {
     let q = "select *
         from gamelog_join_leave
         where user_id like ?";
 
     let rows = sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
         .bind(user_id.to_string())
-        .fetch_all(conn)
+        .fetch_all(conn.as_ref())
         .await
         .unwrap();
 
@@ -472,43 +532,53 @@ pub async fn get_locations_for(user_id: Id, conn: &SqlitePool) -> HashSet<WorldI
 #[must_use]
 pub async fn get_others_for(
     user_id: Id,
-    conn: &SqlitePool,
+    conn: Arc<SqlitePool>,
     locations: HashSet<WorldInstance>,
 ) -> ArcStrMap<Id, u32> {
     let mut others = vec![];
-    for location in locations {
-        let q = "select *
+    let len = locations.len();
+    let mut handles = JoinSet::new();
+    for (idx, location) in locations.into_iter().enumerate() {
+        let conn = conn.clone();
+        let user_id = user_id.clone();
+        let _ = handles.spawn(async move {
+            let q = "select *
                     from gamelog_join_leave
                     where location like ?
                     and location != ''
                     and user_id != ?
                     and user_id is not ''";
 
-        let prefix = location.get_prefix();
-        let location = format!("{}%", prefix);
+            let prefix = location.get_prefix();
+            let location = format!("{}%", prefix);
 
-        let rows = sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
-            .bind(location)
-            .bind(user_id.to_string())
-            .fetch_all(conn)
-            .await
-            .unwrap();
+            let rows = sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
+                .bind(location)
+                .bind(user_id.to_string())
+                .fetch_all(conn.as_ref())
+                .await
+                .unwrap();
 
-        let rows = rows
-            .into_iter()
-            .map(std::convert::Into::into)
-            .collect::<Vec<GamelogJoinLeave>>();
+            let rows = rows.into_iter().map(std::convert::Into::into);
 
-        let other = rows
-            .into_iter()
-            .map(|row| row.user_id.unwrap().into())
-            .filter(|it: &Id| !(*KAT_EXISTS && it.is_kat()))
-            .collect::<HashSet<_>>();
+            let other = rows
+                .map(|row: GamelogJoinLeave| row.user_id.unwrap().into())
+                .filter(|it: &Id| !(*KAT_EXISTS && it.is_kat()))
+                .collect::<HashSet<_>>();
 
-        if !other.is_empty() {
-            others.push(other);
-        }
+            if other.is_empty() {
+                None
+            } else {
+                Some(other)
+            }
+        });
     }
+    handles.join_next().await.into_iter().for_each(|handle| {
+        let _ = handle.unwrap().map(|set| {
+            others.push(set);
+            Some(())
+        });
+    });
 
     let mut everyone_else = ArcStrMap::new();
 
