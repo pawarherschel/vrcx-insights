@@ -6,6 +6,7 @@ pub mod zaphkiel {
     pub mod macros;
     // pub mod utils;
     pub mod cache;
+    pub mod cpu_info;
     pub mod vertex;
     pub mod world_instance;
     pub mod world_regions;

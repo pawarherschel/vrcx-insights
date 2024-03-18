@@ -1,6 +1,4 @@
 #![feature(lazy_cell)]
-#![feature(async_closure)]
-#![feature(let_chains)]
 
 use std::collections::{HashMap, HashSet};
 use std::convert::Into;
@@ -30,100 +28,54 @@ static KAT_EXISTS: LazyLock<bool> = LazyLock::new(|| std::fs::metadata(".kat").i
 #[allow(clippy::too_many_lines)]
 #[tokio::main(flavor = "multi_thread", worker_threads = 15)]
 async fn main() {
-    // let mut set = JoinSet::new();
-    //
-    // for i in 0..10_usize {
-    //     set.spawn(async move {
-    //         sleep(tokio::time::Duration::from_secs(i as u64)).await;
-    //         i
-    //     });
-    // }
-    //
-    // let mut seen = [false; 10];
-    // while let Some(res) = set.join_next().await {
-    //     let idx = res.unwrap();
-    //     println!("{idx}");
-    //     seen[idx] = true;
-    // }
-    //
-    // for i in seen {
-    //     assert!(i);
-    // }
-    //
-    // println!("done");
-
     let start = Instant::now();
 
-    dbg!(start.elapsed());
     let owner_id: Id = std::fs::read_to_string("owner_id.txt")
         .unwrap()
         .trim()
         .into();
-    dbg!(start.elapsed());
 
     let conn = establish_connection().await;
     let conn = Arc::new(conn);
 
     let cache = ArcStrMap::new_empty_arc_str();
 
-    dbg!(start.elapsed());
     let _owner_name = get_display_name_for(owner_id.clone(), conn.clone(), cache.clone());
-    dbg!(start.elapsed());
 
     KAT_DISPLAY_NAME
         .set(get_display_name_for(KAT_ID.to_string().into(), conn.clone(), cache.clone()).await)
         .unwrap();
 
-    dbg!(start.elapsed());
     let latest_name = get_display_name_for(owner_id.clone(), conn.clone(), cache.clone()).await;
-    dbg!(start.elapsed());
 
-    dbg!(start.elapsed());
     let locations = get_locations_for(owner_id.clone(), conn.clone()).await;
-    dbg!(start.elapsed());
 
-    dbg!(start.elapsed());
     let others: ArcStrMap<Id, u32> = get_others_for(owner_id, conn.clone(), locations).await;
-    dbg!(start.elapsed());
 
-    dbg!(start.elapsed());
     let mut others_names = ArcStrMap::new();
-    dbg!(start.elapsed());
 
-    dbg!(start.elapsed());
-    // let mut set = JoinSet::new();
     let mut handles = JoinSet::new();
 
-    // for i in 0..10_usize {
     for (user_id, count) in others.clone().into_iter() {
         let conn = conn.clone();
         let cache = cache.clone();
-        // set.spawn(async move {
         handles.spawn(async move {
             if user_id.is_kat() {
-                println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!early exit");
                 return None;
             }
-            // sleep(Duration::from_secs(i as u64)).await;
             sleep(tokio::time::Duration::from_secs(10)).await;
             let display_name = get_display_name_for(user_id, conn, cache).await;
-            println!("{}", display_name.to_string());
 
             if display_name.is_kat() {
-                println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!early exit");
                 return None;
             }
 
             Some((display_name, count))
         });
     }
-    dbg!(start.elapsed());
 
-    // while let Some(res) = set.join_next().await {
     while let Some(res) = handles.join_next().await {
-        // let idx = res.unwrap();
         let res = res.unwrap();
-        println!("{res:?}");
         match res {
             None => {}
             Some((name, count)) => {
@@ -131,21 +83,15 @@ async fn main() {
             }
         }
     }
-    dbg!(start.elapsed());
-
-    dbg!(&others_names);
-
-    let others_names_len = dbg! {others_names.len()};
 
     let mut graph: ArcStrMap<Name, ArcStrMap<Name, u32>> = ArcStrMap::new();
     graph.insert(latest_name, others_names);
 
-    dbg!(start.elapsed());
     let mut handles = JoinSet::new();
     for (user_id, _) in others.clone().into_iter() {
         let conn = conn.clone();
         let cache = cache.clone();
-        let _ = handles.spawn(async move {
+        handles.spawn(async move {
             let latest_name =
                 get_display_name_for(user_id.clone(), conn.clone(), cache.clone()).await;
             let locations = get_locations_for(user_id.clone(), conn.clone()).await;
@@ -164,17 +110,12 @@ async fn main() {
             }
         });
     }
-    dbg!(start.elapsed());
-
-    dbg!(start.elapsed());
     handles.join_next().await.into_iter().for_each(|handle| {
         let _ = handle
             .unwrap()
             .and_then(|(node, edges)| graph.insert(node, edges));
     });
-    dbg!(start.elapsed());
 
-    dbg!(start.elapsed());
     let graph = graph
         .iter()
         .filter_map(|(node, edges)| {
@@ -185,15 +126,14 @@ async fn main() {
                 .iter()
                 .filter(|(edge, _)| !(edge.is_kat() && *KAT_EXISTS))
                 .map(|(edge, count)| (edge.to_owned(), count.to_owned()))
-                .collect::<ArcStrMap<Name, u32>>();
+                .collect::<HashMap<Name, u32>>();
             if edges.is_empty() {
                 return None;
             }
             Some((node, edges))
         })
         .map(|(node, edges)| (node.to_owned(), edges))
-        .collect::<ArcStrMap<Name, ArcStrMap<Name, u32>>>();
-    dbg!(start.elapsed());
+        .collect::<HashMap<Name, HashMap<Name, u32>>>();
 
     if std::fs::metadata("graph.ron").is_ok() {
         std::fs::remove_file("graph.ron").unwrap();
@@ -495,8 +435,6 @@ pub async fn get_display_name_for(
         order by created_at desc
         limit 1";
 
-    println!("{}", user_id.to_string());
-
     let name: String = sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
         .bind(user_id.to_string())
         .fetch_one(pool.as_ref())
@@ -541,7 +479,7 @@ pub async fn get_others_for(
     for (idx, location) in locations.into_iter().enumerate() {
         let conn = conn.clone();
         let user_id = user_id.clone();
-        let _ = handles.spawn(async move {
+        handles.spawn(async move {
             let q = "select *
                     from gamelog_join_leave
                     where location like ?
@@ -569,16 +507,15 @@ pub async fn get_others_for(
             if other.is_empty() {
                 None
             } else {
-                Some(other)
+                Some((idx, other))
             }
         });
     }
-    handles.join_next().await.into_iter().for_each(|handle| {
-        let _ = handle.unwrap().map(|set| {
+    while let Some(handle) = handles.join_next().await {
+        if let Ok(Some((_, set))) = handle {
             others.push(set);
-            Some(())
-        });
-    });
+        }
+    }
 
     let mut everyone_else = ArcStrMap::new();
 
