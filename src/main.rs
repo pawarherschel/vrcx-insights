@@ -1,7 +1,8 @@
 #![feature(lazy_cell)]
 
-use std::collections::{HashMap, HashSet};
-use std::convert::Into;
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::Formatter;
 use std::hash::{BuildHasher, Hash};
 use std::sync::{Arc, LazyLock, OnceLock, RwLock};
 use std::time::Instant;
@@ -9,7 +10,9 @@ use std::time::Instant;
 use petgraph::dot::Config;
 use petgraph::Graph;
 use ron::ser::{to_writer_pretty, PrettyConfig};
-use serde::{Deserialize, Serialize};
+use serde::de::{SeqAccess, Visitor};
+use serde::ser::SerializeTuple;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sqlx::SqlitePool;
 use tokio::task::JoinSet;
 use tokio::time::sleep;
@@ -38,8 +41,7 @@ async fn main() {
 
     let cache = Arc::new(RwLock::new(HashMap::new()));
 
-    let owner_name = get_display_name_for(owner_id.clone(), conn.clone(), cache.clone()).await;
-    dbg! {owner_name};
+    let _owner_name = get_display_name_for(owner_id.clone(), conn.clone(), cache.clone()).await;
 
     KAT_DISPLAY_NAME
         .set(get_display_name_for(KAT_ID.to_string().into(), conn.clone(), cache.clone()).await)
@@ -48,12 +50,10 @@ async fn main() {
     let latest_name = get_display_name_for(owner_id.clone(), conn.clone(), cache.clone()).await;
 
     let locations = get_locations_for(owner_id.clone(), conn.clone()).await;
-    dbg! {locations.len()};
 
     let others: Arc<HashMap<Id, u32>> = get_others_for(owner_id, conn.clone(), locations)
         .await
         .into();
-    dbg! {others.len()};
 
     let mut others_names: HashMap<Name, u32> = HashMap::new();
 
@@ -122,12 +122,6 @@ async fn main() {
             .and_then(|(node, edges)| graph.insert(node, edges));
     });
 
-    dbg! {graph.len()};
-    for (name, edges) in &graph {
-        dbg! {name};
-        dbg! {edges.len()};
-    }
-
     let graph = graph
         .iter()
         .map(|(name, edges)| {
@@ -180,18 +174,23 @@ async fn main() {
             let new_others = others
                 .iter()
                 .map(|(k, count)| {
-                    let percentage = f64::from(*count) / f64::from(total) * 100_f64;
-                    let percentile = f64::from(*count) / f64::from(max) * 100_f64;
+                    let count = *count;
+                    let percentage =
+                        ((f64::from(count) * 10_000_f64) / f64::from(total)).round() / 100_f64;
+                    let percentile =
+                        ((f64::from(count) * 10_000_f64) / f64::from(max)).round() / 100_f64;
                     (
                         k.clone(),
-                        (
-                            *count,
-                            (percentage * 100_f64).round() / 100_f64,
-                            (percentile * 100_f64).round() / 100_f64,
-                        ),
+                        Metadata {
+                            count,
+                            total,
+                            max,
+                            percentage,
+                            percentile,
+                        },
                     )
                 })
-                .collect::<HashMap<_, _>>();
+                .collect::<HashMap<_, Metadata>>();
             if new_others.is_empty() {
                 None
             } else {
@@ -200,16 +199,14 @@ async fn main() {
         })
         .collect::<HashMap<_, HashMap<_, _>>>();
 
-    let mut graph2_sorted = graph2
+    let graph2_sorted = graph2
         .iter()
         .map(|(k, v)| {
             (k.clone(), {
-                let mut v = v.clone().into_iter().collect::<Vec<_>>();
-                v.sort_by_key(|(_, (it, _, _))| it.to_owned());
-                v
+                v.clone().into_iter().collect::<BTreeMap<_, _>>()
             })
         })
-        .collect::<Vec<_>>();
+        .collect::<BTreeMap<_, _>>();
 
     let graph2_sorted_set: HashMap<Arc<str>, HashMap<Arc<str>, _>> = graph2_sorted
         .iter()
@@ -222,13 +219,13 @@ async fn main() {
         })
         .collect();
 
-    graph2_sorted.sort_by(|a, b| {
-        let (_, a) = a;
-        let (_, b) = b;
-        let a_len = a.iter().map(|(_, (count, _, _))| count).sum::<u32>();
-        let b_len = b.iter().map(|(_, (count, _, _))| count).sum::<u32>();
-        b_len.cmp(&a_len)
-    });
+    // graph2_sorted.sort_by(|a, b| {
+    //     let (_, a) = a;
+    //     let (_, b) = b;
+    //     let a_len = a.iter().map(|(_, (count, _, _))| count).sum::<u32>();
+    //     let b_len = b.iter().map(|(_, (count, _, _))| count).sum::<u32>();
+    //     b_len.cmp(&a_len)
+    // });
 
     if std::fs::metadata("graph2_sorted.ron").is_ok() {
         std::fs::remove_file("graph2_sorted.ron").unwrap();
@@ -302,7 +299,7 @@ async fn main() {
     let mut petgraph = Graph::new();
     let mut dot_idxs = HashMap::new();
 
-    for (node, edges) in graph2_sorted.clone() {
+    for (node, edges) in graph2_sorted {
         if node.is_kat() && !*KAT_EXISTS {
             continue;
         }
@@ -336,12 +333,118 @@ async fn main() {
     )
     .unwrap();
 
-    println!("graph: {graph:?}");
-    println!("graph2: {graph2:?}");
-    println!("sorted graph2: {graph2_sorted:?}");
-
     println!("\x07Total run time => {:?}", start.elapsed());
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct Metadata {
+    pub count: u32,
+    pub max: u32,
+    pub total: u32,
+    pub percentage: f64,
+    pub percentile: f64,
+}
+
+impl PartialEq for Metadata {
+    fn eq(&self, other: &Self) -> bool {
+        let &Self {
+            count,
+            total,
+            max,
+            percentage: _,
+            percentile: _,
+        } = self;
+
+        count == other.count && total == other.total && max == other.max
+    }
+}
+
+impl serde::Serialize for Metadata {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let Self {
+            count,
+            max,
+            total,
+            percentage,
+            percentile,
+        } = self;
+
+        let mut s = serializer.serialize_tuple(5)?;
+        s.serialize_element(count)?;
+        s.serialize_element(max)?;
+        s.serialize_element(total)?;
+        s.serialize_element(percentage)?;
+        s.serialize_element(percentile)?;
+        s.end()
+    }
+}
+
+struct MetadataVisitor;
+
+impl<'de> Visitor<'de> for MetadataVisitor {
+    type Value = Metadata;
+
+    fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+        formatter.write_str("a tuple of len 5")
+    }
+
+    fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        // $(
+        //         let $name = match tri!(seq.next_element()) {
+        //         Some(value) => value,
+        //         None => return Err(Error::invalid_length($n, &self)),
+        //     };
+        // )+
+        //
+        // Ok(($($name,)+))
+
+        todo!()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Metadata {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_tuple(5, MetadataVisitor)
+    }
+}
+
+// impl Eq for Metadata {}
+
+#[allow(clippy::non_canonical_partial_ord_impl)]
+impl PartialOrd for Metadata {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        let &Self {
+            count,
+            total,
+            max,
+            percentage: _,
+            percentile: _,
+        } = self;
+        let count = count.cmp(&other.count);
+        let total = total.cmp(&other.total);
+        let max = max.cmp(&other.max);
+
+        match (total, max) {
+            (Ordering::Equal, Ordering::Equal) => Some(count),
+            _ => None,
+        }
+    }
+}
+
+// impl Ord for Metadata {
+//     fn cmp(&self, other: &Self) -> Ordering {
+//         self.partial_cmp(other).unwrap()
+//     }
+// }
 
 trait IsKat {
     fn is_kat(&self) -> bool;
