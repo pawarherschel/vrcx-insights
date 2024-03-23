@@ -203,8 +203,25 @@ async fn main() {
 
     let mut graph2_sorted = graph2
         .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
+        .map(|(k, v)| {
+            (k.clone(), {
+                let mut v = v.clone().into_iter().collect::<Vec<_>>();
+                v.sort_by_key(|(_, (it, _, _))| it.to_owned());
+                v
+            })
+        })
         .collect::<Vec<_>>();
+
+    let graph2_sorted_set: HashMap<Arc<str>, HashMap<Arc<str>, _>> = graph2_sorted
+        .iter()
+        .map(|(name, v)| {
+            (name.clone(), {
+                v.iter()
+                    .map(|(a, b)| (a.to_owned(), b.to_owned()))
+                    .collect()
+            })
+        })
+        .collect();
 
     graph2_sorted.sort_by(|a, b| {
         let (_, a) = a;
@@ -226,9 +243,9 @@ async fn main() {
 
     let undirected_graph = {
         let mut adjacency_matrix: HashMap<_, HashSet<_>> = HashMap::new();
-        for (name, others) in &graph2_sorted {
+        for (name, others) in graph2_sorted_set {
             let mut current_list: HashSet<_> = {
-                match adjacency_matrix.get(name) {
+                match adjacency_matrix.get(&name) {
                     None => {
                         let ret = HashSet::new();
                         adjacency_matrix.insert(name.clone(), ret.clone());
