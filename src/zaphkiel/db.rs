@@ -4,6 +4,7 @@ use sqlx::{Sqlite, SqlitePool};
 
 use crate::zaphkiel::cpu_info::CPU_THREADS;
 
+#[allow(clippy::missing_panics_doc)]
 pub async fn establish_connection() -> SqlitePool {
     sqlx::pool::PoolOptions::<Sqlite>::new()
         .acquire_timeout(Duration::from_secs(60 * 60))

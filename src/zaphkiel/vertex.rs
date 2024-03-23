@@ -14,8 +14,8 @@ impl Hash for Vertex {
 }
 
 impl Vertex {
-    pub fn new(name: impl ToString) -> Vertex {
-        Vertex {
+    pub fn new(name: &impl ToString) -> Self {
+        Self {
             user_id: name.to_string(),
             ..Default::default()
         }
@@ -23,7 +23,7 @@ impl Vertex {
 }
 
 impl Vertex {
-    pub fn add(&mut self, other: Vertex) {
+    pub fn add(&mut self, other: Self) {
         let old = self.everyone_else.get(&other).unwrap_or(&0);
         self.everyone_else.insert(other, old + 1);
     }

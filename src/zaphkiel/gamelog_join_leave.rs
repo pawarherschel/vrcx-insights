@@ -19,6 +19,7 @@ use crate::zaphkiel::join_leave_event::JoinLeaveEvent;
 use crate::zaphkiel::world_instance::WorldInstance;
 
 #[derive(Debug, sqlx::FromRow, Clone)]
+#[allow(clippy::module_name_repetitions)] // I want to keep the name ~kat
 pub struct GamelogJoinLeaveRow {
     pub id: i64,
     pub created_at: String,
@@ -40,6 +41,12 @@ pub struct GamelogJoinLeave {
     pub time: Option<u64>,
 }
 
+impl Default for GamelogJoinLeave {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GamelogJoinLeave {
     #[must_use]
     pub fn new() -> Self {
@@ -58,6 +65,7 @@ impl GamelogJoinLeave {
     }
 }
 
+#[allow(clippy::fallible_impl_from)] // we want it to fail when it's wrong
 impl From<GamelogJoinLeaveRow> for GamelogJoinLeave {
     fn from(row: GamelogJoinLeaveRow) -> Self {
         let mut ret = Self::new();
@@ -65,18 +73,14 @@ impl From<GamelogJoinLeaveRow> for GamelogJoinLeave {
         ret.created_at = row.created_at.parse().unwrap();
         ret.event = row.r#type.parse().unwrap();
         ret.display_name = row.display_name.into();
-        ret.location = if let Ok(location) = row.location.parse() {
-            Some(location)
-        } else {
-            None
-        };
+        ret.location = row.location.parse().ok();
         ret.user_id = match row.user_id {
             x if x.is_empty() => None,
             _ => Some(row.user_id.into()),
         };
         ret.time = match row.time {
             ..=0 => None,
-            _ => Some(row.time as u64),
+            _ => Some(row.time.try_into().unwrap()),
         };
 
         ret

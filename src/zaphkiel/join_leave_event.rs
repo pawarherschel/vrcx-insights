@@ -15,23 +15,16 @@ impl From<&str> for JoinLeaveEvent {
     }
 }
 
+#[allow(clippy::fallible_impl_from)] // we want it to fail if it's wrong
 impl From<String> for JoinLeaveEvent {
     fn from(value: String) -> Self {
         let value = value.to_lowercase();
         match value.as_str() {
-            "join" => JoinLeaveEvent::Join,
-            "leave" => JoinLeaveEvent::Leave,
+            "join" | "joins" | "joined" | "onplayerjoined" => Self::Join,
 
-            "joins" => JoinLeaveEvent::Join,
-            "leaves" => JoinLeaveEvent::Leave,
+            "leave" | "leaves" | "left" | "onplayerleft" => Self::Leave,
 
-            "joined" => JoinLeaveEvent::Join,
-            "left" => JoinLeaveEvent::Leave,
-
-            "onplayerjoined" => JoinLeaveEvent::Join,
-            "onplayerleft" => JoinLeaveEvent::Leave,
-
-            _ => panic!("Unknown join/leave event: {}", value),
+            _ => panic!("Unknown join/leave event: {value}"),
         }
     }
 }

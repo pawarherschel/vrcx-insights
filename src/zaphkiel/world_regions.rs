@@ -18,31 +18,18 @@ impl From<&str> for Regions {
     }
 }
 
+#[allow(clippy::fallible_impl_from)] // ~kat
 impl From<String> for Regions {
     fn from(value: String) -> Self {
         let value = value.to_lowercase();
         match value.as_str() {
-            "uswest" => Regions::USWest,
-            "us" => Regions::US,
-            "useast" => Regions::USEast,
-            "europe" => Regions::Europe,
-            "japan" => Regions::Japan,
+            "uswest" | "usw" | "us w" | "us_w" | "uw" => Self::USWest,
+            "us" => Self::US,
+            "useast" | "use" | "us e" | "us_e" | "ue" => Self::USEast,
+            "europe" | "eu" => Self::Europe,
+            "japan" | "jp" => Self::Japan,
 
-            "usw" => Regions::USWest,
-            "use" => Regions::USEast,
-            "eu" => Regions::Europe,
-            "jp" => Regions::Japan,
-
-            "us w" => Regions::USWest,
-            "us e" => Regions::USEast,
-
-            "us_w" => Regions::USWest,
-            "us_e" => Regions::USEast,
-
-            "uw" => Regions::USWest,
-            "ue" => Regions::USEast,
-
-            _ => panic!("Unknown region: {}", value),
+            _ => panic!("Unknown region: {value}"),
         }
     }
 }
@@ -50,7 +37,7 @@ impl From<String> for Regions {
 impl FromStr for Regions {
     type Err = std::string::ParseError;
 
-    fn from_str(s: &str) -> Result<Regions, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self::from(s))
     }
 }

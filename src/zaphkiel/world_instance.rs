@@ -19,10 +19,12 @@ pub struct WorldInstance {
 impl WorldInstance {
     /// Create a new `WorldInstance` with default values as specified in the `Default` trait.
     #[allow(dead_code)]
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn get_prefix(&self) -> String {
         format!("{}:{}", self.world_id, self.instance_id)
     }
@@ -39,6 +41,7 @@ impl WorldInstance {
 /// - `InvalidOptionalField`: The optional field is invalid.
 /// - `Other`: Other errors.
 #[derive(Debug, Clone, sqlx::Type, Default, PartialEq, Eq)]
+#[allow(clippy::module_name_repetitions)] // I want it like that ~kat
 pub enum WorldInstanceParseError {
     Empty,
     InvalidFormat,
@@ -92,7 +95,7 @@ impl FromStr for WorldInstance {
                 "friends" => ret.friends = Some(value),
                 "group" => ret.group = Some(value),
                 "groupAccessType" => ret.group_access_type = Some(value.into()),
-                _ => panic!("Unknown key: {}, {part}", key),
+                _ => panic!("Unknown key: {key}, {part}"),
             }
         }
 
@@ -100,12 +103,14 @@ impl FromStr for WorldInstance {
     }
 }
 
+#[allow(clippy::fallible_impl_from)] // I want it like that ~kat
 impl From<&str> for WorldInstance {
     fn from(s: &str) -> Self {
         Self::from_str(s).unwrap()
     }
 }
 
+#[allow(clippy::fallible_impl_from)] // I want it like that ~kat
 impl From<String> for WorldInstance {
     fn from(s: String) -> Self {
         Self::from_str(&s).unwrap()
@@ -122,7 +127,13 @@ mod tests {
     #[test]
     fn test_parse_world_instance() {
         let world_instance_str = "world_id:instance_id~region(EU)";
-        let expected_world_instance = WorldInstance {
+        let expected_world_instance = world_instance_data();
+        let actual_world_instance = WorldInstance::from_str(world_instance_str).unwrap();
+        assert_eq!(actual_world_instance, expected_world_instance);
+    }
+
+    fn world_instance_data() -> WorldInstance {
+        WorldInstance {
             world_id: "world_id".to_string(),
             instance_id: "instance_id".to_string(),
             nonce: None,
@@ -132,9 +143,7 @@ mod tests {
             friends: None,
             group: None,
             group_access_type: None,
-        };
-        let actual_world_instance = WorldInstance::from_str(world_instance_str).unwrap();
-        assert_eq!(actual_world_instance, expected_world_instance);
+        }
     }
 
     #[test]
@@ -171,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "unknown key in world instance string")]
     fn test_parse_world_instance_unknown_key() {
         let world_instance_str = "world_id:instance_id~unknown_key(value)";
         let actual_result = WorldInstance::from_str(world_instance_str);
@@ -189,36 +198,16 @@ mod tests {
 
     #[test]
     fn test_from_str_for_world_instance_from_string() {
-        let world_instance_str = "world_id:instance_id~region(US)";
-        let expected_world_instance = WorldInstance {
-            world_id: "world_id".to_string(),
-            instance_id: "instance_id".to_string(),
-            nonce: None,
-            hidden: None,
-            private: None,
-            region: Some(Regions::US),
-            friends: None,
-            group: None,
-            group_access_type: None,
-        };
+        let world_instance_str = "world_id:instance_id~region(EU)";
+        let expected_world_instance = world_instance_data();
         let actual_world_instance = WorldInstance::from(world_instance_str.to_string());
         assert_eq!(actual_world_instance, expected_world_instance);
     }
 
     #[test]
     fn test_from_str_for_world_instance_from_str() {
-        let world_instance_str = "world_id:instance_id~region(US)";
-        let expected_world_instance = WorldInstance {
-            world_id: "world_id".to_string(),
-            instance_id: "instance_id".to_string(),
-            nonce: None,
-            hidden: None,
-            private: None,
-            region: Some(Regions::US),
-            friends: None,
-            group: None,
-            group_access_type: None,
-        };
+        let world_instance_str = "world_id:instance_id~region(EU)";
+        let expected_world_instance = world_instance_data();
         let actual_world_instance = WorldInstance::from(world_instance_str);
         assert_eq!(actual_world_instance, expected_world_instance);
     }
