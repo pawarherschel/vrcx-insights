@@ -2,12 +2,11 @@
 
 use std::collections::{HashMap, HashSet};
 use std::convert::Into;
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash};
 use std::sync::{Arc, LazyLock, OnceLock, RwLock};
 use std::time::Instant;
 
 use petgraph::dot::Config;
-use petgraph::visit::Walker;
 use petgraph::Graph;
 use ron::ser::{to_writer_pretty, PrettyConfig};
 use serde::{Deserialize, Serialize};
@@ -244,21 +243,21 @@ async fn main() {
     let undirected_graph = {
         let mut adjacency_matrix: HashMap<_, HashSet<_>> = HashMap::new();
         for (name, others) in graph2_sorted_set {
-            let mut current_list: HashSet<_> = {
-                match adjacency_matrix.get(&name) {
-                    None => {
-                        let ret = HashSet::new();
-                        adjacency_matrix.insert(name.clone(), ret.clone());
-                        ret
-                    }
-                    Some(set) => set.clone(),
+            #[allow(clippy::option_if_let_else)] // adjacency_matrix is getting borrowed twice
+            let mut current_list: HashSet<_> = match adjacency_matrix.get(&name) {
+                None => {
+                    let ret = HashSet::new();
+                    adjacency_matrix.insert(name.clone(), ret.clone());
+                    ret
                 }
+                Some(set) => set.clone(),
             };
             for other in others.keys() {
                 current_list.insert(other.clone());
             }
 
             for other in &current_list {
+                #[allow(clippy::option_if_let_else)] // we're borrowing adjacency_matrix twice
                 let mut other_list = match adjacency_matrix.get(other) {
                     None => {
                         let ret = HashSet::new();
@@ -308,7 +307,7 @@ async fn main() {
             continue;
         }
 
-        for (edge, weight) in edges.iter() {
+        for (edge, weight) in &edges {
             if edge.is_kat() && !*KAT_EXISTS {
                 continue;
             }
@@ -399,10 +398,9 @@ impl From<&str> for Id {
     }
 }
 
-impl Into<Arc<str>> for Id {
-    #[inline]
-    fn into(self) -> Arc<str> {
-        self.0
+impl From<Id> for Arc<str> {
+    fn from(value: Id) -> Self {
+        value.0
     }
 }
 
@@ -444,10 +442,9 @@ impl From<Arc<str>> for Name {
     }
 }
 
-impl Into<Arc<str>> for Name {
-    #[inline]
-    fn into(self) -> Arc<str> {
-        self.0
+impl From<Name> for Arc<str> {
+    fn from(value: Name) -> Self {
+        value.0
     }
 }
 
@@ -495,11 +492,14 @@ pub async fn get_uuid_of(display_name: Name, pool: &SqlitePool) -> Id {
     row.user_id.into()
 }
 
-pub async fn get_display_name_for(
+pub async fn get_display_name_for<S>(
     user_id: Id,
     pool: Arc<SqlitePool>,
-    mut cache: Arc<RwLock<HashMap<Id, Arc<str>>>>,
-) -> Name {
+    cache: Arc<RwLock<HashMap<Id, Arc<str>, S>>>,
+) -> Name
+where
+    S: BuildHasher + Send + Sync,
+{
     if let Some(display_name) = cache.read().unwrap().get(&user_id) {
         return display_name.clone().into();
     }
@@ -545,11 +545,14 @@ pub async fn get_locations_for(user_id: Id, conn: Arc<SqlitePool>) -> HashSet<Wo
 
 #[must_use]
 #[inline]
-pub async fn get_others_for(
+pub async fn get_others_for<S>(
     user_id: Id,
     conn: Arc<SqlitePool>,
-    locations: HashSet<WorldInstance>,
-) -> HashMap<Id, u32> {
+    locations: HashSet<WorldInstance, S>,
+) -> HashMap<Id, u32>
+where
+    S: BuildHasher + Send + Sync,
+{
     let mut others = vec![];
     // let len = locations.len();
     let mut handles = JoinSet::new();
