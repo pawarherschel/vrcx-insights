@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
+use std::iter::FromIterator;
 use std::ops::Index;
 use std::sync::Arc;
 
@@ -158,6 +159,8 @@ where
     K: Serialize + AsRef<str>,
     V: Serialize,
     Arc<str>: for<'a> From<&'a K>,
+    K: std::fmt::Debug,
+    V: std::fmt::Debug,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -166,6 +169,8 @@ where
         let map = self.iter().map(|(k, v)| (k.as_ref(), v));
 
         let mut s = serializer.serialize_map(Some(self.len()))?;
+
+        println!("map: {:?}", self);
 
         for (k, v) in map {
             s.serialize_entry(k, v)?;

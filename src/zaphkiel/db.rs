@@ -7,8 +7,8 @@ use crate::zaphkiel::cpu_info::CPU_THREADS;
 pub async fn establish_connection() -> SqlitePool {
     sqlx::pool::PoolOptions::<Sqlite>::new()
         .acquire_timeout(Duration::from_secs(60 * 60))
-        .max_connections(CPU_THREADS as u32)
-        .connect("./db/VRCX.sqlite3")
+        .max_connections(u32::try_from(CPU_THREADS).unwrap())
+        .connect("sqlite://db/VRCX.sqlite3?mode=ro")
         .await
         .unwrap()
 }
