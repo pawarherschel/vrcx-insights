@@ -1,7 +1,13 @@
+#![feature(lazy_cell)]
+
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::convert::Into;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+use cushy::value::Dynamic;
+use cushy::widget::MakeWidget as _;
+use cushy::Run as _;
 use petgraph::dot::Config;
 use petgraph::Graph;
 use ron::ser::{to_writer_pretty, PrettyConfig};
@@ -16,7 +22,23 @@ use vrcx_insights::{get_display_name_for, get_locations_for, get_others_for};
 #[allow(clippy::too_many_lines)]
 #[tokio::main(flavor = "multi_thread", worker_threads = 15)]
 async fn main() {
+    let loop_status: Dynamic<i32> = Dynamic::default();
+    let count = Dynamic::new(0_isize);
+
+    count
+        .to_label()
+        // Use the label as the contents of a button
+        .into_button()
+        // Set the `on_click` callback to a closure that increments the counter.
+        .on_click(move |_| count.set(count.get() + 1))
+        // Run the application
+        .run();
+
+    loop_status.set(loop_status.get() + 1);
+
     let start = Instant::now();
+
+    loop_status.set(loop_status.get() + 1);
 
     let owner_id: Id = std::fs::read_to_string("owner_id.txt")
         .unwrap()
@@ -36,15 +58,23 @@ async fn main() {
 
     let latest_name = get_display_name_for(owner_id.clone(), conn.clone(), cache.clone()).await;
 
+    loop_status.set(loop_status.get() + 1);
+
     let locations = get_locations_for(owner_id.clone(), conn.clone()).await;
+
+    loop_status.set(loop_status.get() + 1);
 
     let others: Arc<HashMap<Id, u32>> = get_others_for(owner_id, conn.clone(), locations)
         .await
         .into();
 
+    loop_status.set(loop_status.get() + 1);
+
     let mut others_names: HashMap<Name, u32> = HashMap::new();
 
     let mut handles = JoinSet::new();
+
+    loop_status.set(loop_status.get() + 1);
 
     for (user_id, count) in others.iter() {
         let conn = conn.clone();
@@ -75,6 +105,8 @@ async fn main() {
             }
         }
     }
+
+    loop_status.set(loop_status.get() + 1);
 
     let mut graph: HashMap<Name, HashMap<Name, u32>> = HashMap::new();
     graph.insert(latest_name, others_names);
@@ -109,6 +141,8 @@ async fn main() {
             .and_then(|(node, edges)| graph.insert(node, edges));
     });
 
+    loop_status.set(loop_status.get() + 1);
+
     let graph = graph
         .iter()
         .map(|(name, edges)| {
@@ -142,6 +176,8 @@ async fn main() {
         .map(|(node, edges)| (node.clone().0, edges))
         .collect::<HashMap<Arc<str>, HashMap<Arc<str>, u32>>>();
 
+    loop_status.set(loop_status.get() + 1);
+
     if std::fs::metadata("graph.ron").is_ok() {
         std::fs::remove_file("graph.ron").unwrap();
     }
@@ -151,6 +187,8 @@ async fn main() {
         PrettyConfig::default(),
     )
     .unwrap();
+
+    loop_status.set(loop_status.get() + 1);
 
     let graph2 = graph
         .iter()
@@ -186,6 +224,8 @@ async fn main() {
         })
         .collect::<HashMap<_, HashMap<_, _>>>();
 
+    loop_status.set(loop_status.get() + 1);
+
     let graph2_sorted = graph2
         .iter()
         .map(|(k, v)| {
@@ -198,6 +238,8 @@ async fn main() {
         })
         .collect::<BTreeMap<_, _>>();
 
+    loop_status.set(loop_status.get() + 1);
+
     let graph2_sorted_set: HashMap<Arc<str>, HashMap<Arc<str>, _>> = graph2_sorted
         .iter()
         .map(|(name, v)| {
@@ -209,6 +251,8 @@ async fn main() {
         })
         .collect();
 
+    loop_status.set(loop_status.get() + 1);
+
     if std::fs::metadata("graph2_sorted.ron").is_ok() {
         std::fs::remove_file("graph2_sorted.ron").unwrap();
     }
@@ -218,6 +262,8 @@ async fn main() {
         PrettyConfig::default(),
     )
     .unwrap();
+
+    loop_status.set(loop_status.get() + 1);
 
     let undirected_graph = {
         let mut adjacency_matrix: HashMap<_, HashSet<_>> = HashMap::new();
@@ -268,6 +314,8 @@ async fn main() {
         list
     };
 
+    loop_status.set(loop_status.get() + 1);
+
     if std::fs::metadata("sorted_undirected_graph.ron").is_ok() {
         std::fs::remove_file("sorted_undirected_graph.ron").unwrap();
     }
@@ -278,8 +326,12 @@ async fn main() {
     )
     .unwrap();
 
+    loop_status.set(loop_status.get() + 1);
+
     let mut petgraph = Graph::new();
     let mut dot_idxs = HashMap::new();
+
+    loop_status.set(loop_status.get() + 1);
 
     for (node, edges) in graph2_sorted {
         if node.is_kat() && !*KAT_EXISTS {
@@ -305,8 +357,12 @@ async fn main() {
         }
     }
 
+    loop_status.set(loop_status.get() + 1);
+
     let dot_edge_no_label = petgraph::dot::Dot::with_config(&petgraph, &[Config::EdgeNoLabel]);
     let dot_edge_with_label = petgraph::dot::Dot::new(&petgraph);
+
+    loop_status.set(loop_status.get() + 1);
 
     std::fs::write("dot_edge_no_label.dot", format!("{dot_edge_no_label:?}")).unwrap();
     std::fs::write(
@@ -314,6 +370,8 @@ async fn main() {
         format!("{dot_edge_with_label:?}"),
     )
     .unwrap();
+
+    loop_status.set(loop_status.get() + 1);
 
     println!("\x07Total run time => {:?}", start.elapsed());
 }
