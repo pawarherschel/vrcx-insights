@@ -190,7 +190,10 @@ async fn main() {
         .iter()
         .map(|(k, v)| {
             (k.clone(), {
-                v.clone().into_iter().collect::<BTreeMap<_, _>>()
+                let mut v = v.clone().into_iter().collect::<Vec<_>>();
+                v.sort_by_key(|(_, Metadata { count, .. })| *count);
+                v.reverse();
+                v
             })
         })
         .collect::<BTreeMap<_, _>>();
