@@ -8,6 +8,7 @@ pub enum GroupAccessType {
 }
 
 impl From<&str> for GroupAccessType {
+    #[inline]
     fn from(value: &str) -> Self {
         let value = value.to_lowercase();
         Self::from(value)
@@ -16,6 +17,7 @@ impl From<&str> for GroupAccessType {
 
 #[allow(clippy::fallible_impl_from)] // we WANT it to fail if it's wrong
 impl From<String> for GroupAccessType {
+    #[inline]
     fn from(value: String) -> Self {
         let value = value.to_lowercase();
         match value.as_str() {

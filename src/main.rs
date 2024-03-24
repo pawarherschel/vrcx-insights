@@ -1,27 +1,17 @@
-#![feature(lazy_cell)]
-
-use std::collections::{HashMap, HashSet};
-use std::convert::Into;
-use std::hash::{BuildHasher, Hash};
-use std::sync::{Arc, LazyLock, OnceLock, RwLock};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use petgraph::dot::Config;
 use petgraph::Graph;
 use ron::ser::{to_writer_pretty, PrettyConfig};
-use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use tokio::task::JoinSet;
 use tokio::time::sleep;
 
 use vrcx_insights::zaphkiel::db::establish_connection;
-use vrcx_insights::zaphkiel::gamelog_join_leave::{GamelogJoinLeave, GamelogJoinLeaveRow};
-use vrcx_insights::zaphkiel::world_instance::WorldInstance;
-
-static KAT_ID: LazyLock<Id> =
-    LazyLock::new(|| Id("usr_c2a23c47-1622-4b7a-90a4-b824fcaacc69".into()));
-static KAT_DISPLAY_NAME: OnceLock<Name> = OnceLock::new();
-static KAT_EXISTS: LazyLock<bool> = LazyLock::new(|| std::fs::metadata(".kat").is_ok());
+use vrcx_insights::zaphkiel::is_kat::{Id, IsKat, Name, KAT_DISPLAY_NAME, KAT_EXISTS, KAT_ID};
+use vrcx_insights::zaphkiel::metadata::Metadata;
+use vrcx_insights::{get_display_name_for, get_locations_for, get_others_for};
 
 #[allow(clippy::too_many_lines)]
 #[tokio::main(flavor = "multi_thread", worker_threads = 15)]
@@ -38,8 +28,7 @@ async fn main() {
 
     let cache = Arc::new(RwLock::new(HashMap::new()));
 
-    let owner_name = get_display_name_for(owner_id.clone(), conn.clone(), cache.clone()).await;
-    dbg! {owner_name};
+    let _owner_name = get_display_name_for(owner_id.clone(), conn.clone(), cache.clone()).await;
 
     KAT_DISPLAY_NAME
         .set(get_display_name_for(KAT_ID.to_string().into(), conn.clone(), cache.clone()).await)
@@ -48,12 +37,10 @@ async fn main() {
     let latest_name = get_display_name_for(owner_id.clone(), conn.clone(), cache.clone()).await;
 
     let locations = get_locations_for(owner_id.clone(), conn.clone()).await;
-    dbg! {locations.len()};
 
     let others: Arc<HashMap<Id, u32>> = get_others_for(owner_id, conn.clone(), locations)
         .await
         .into();
-    dbg! {others.len()};
 
     let mut others_names: HashMap<Name, u32> = HashMap::new();
 
@@ -122,12 +109,6 @@ async fn main() {
             .and_then(|(node, edges)| graph.insert(node, edges));
     });
 
-    dbg! {graph.len()};
-    for (name, edges) in &graph {
-        dbg! {name};
-        dbg! {edges.len()};
-    }
-
     let graph = graph
         .iter()
         .map(|(name, edges)| {
@@ -180,18 +161,23 @@ async fn main() {
             let new_others = others
                 .iter()
                 .map(|(k, count)| {
-                    let percentage = f64::from(*count) / f64::from(total) * 100_f64;
-                    let percentile = f64::from(*count) / f64::from(max) * 100_f64;
+                    let count = *count;
+                    let percentage =
+                        ((f64::from(count) * 10_000_f64) / f64::from(total)).round() / 100_f64;
+                    let percentile =
+                        ((f64::from(count) * 10_000_f64) / f64::from(max)).round() / 100_f64;
                     (
                         k.clone(),
-                        (
-                            *count,
-                            (percentage * 100_f64).round() / 100_f64,
-                            (percentile * 100_f64).round() / 100_f64,
-                        ),
+                        Metadata {
+                            count,
+                            max,
+                            total,
+                            percentage,
+                            percentile,
+                        },
                     )
                 })
-                .collect::<HashMap<_, _>>();
+                .collect::<HashMap<_, Metadata>>();
             if new_others.is_empty() {
                 None
             } else {
@@ -200,16 +186,17 @@ async fn main() {
         })
         .collect::<HashMap<_, HashMap<_, _>>>();
 
-    let mut graph2_sorted = graph2
+    let graph2_sorted = graph2
         .iter()
         .map(|(k, v)| {
             (k.clone(), {
                 let mut v = v.clone().into_iter().collect::<Vec<_>>();
-                v.sort_by_key(|(_, (it, _, _))| it.to_owned());
+                v.sort_by_key(|(_, Metadata { count, .. })| *count);
+                v.reverse();
                 v
             })
         })
-        .collect::<Vec<_>>();
+        .collect::<BTreeMap<_, _>>();
 
     let graph2_sorted_set: HashMap<Arc<str>, HashMap<Arc<str>, _>> = graph2_sorted
         .iter()
@@ -221,14 +208,6 @@ async fn main() {
             })
         })
         .collect();
-
-    graph2_sorted.sort_by(|a, b| {
-        let (_, a) = a;
-        let (_, b) = b;
-        let a_len = a.iter().map(|(_, (count, _, _))| count).sum::<u32>();
-        let b_len = b.iter().map(|(_, (count, _, _))| count).sum::<u32>();
-        b_len.cmp(&a_len)
-    });
 
     if std::fs::metadata("graph2_sorted.ron").is_ok() {
         std::fs::remove_file("graph2_sorted.ron").unwrap();
@@ -302,7 +281,7 @@ async fn main() {
     let mut petgraph = Graph::new();
     let mut dot_idxs = HashMap::new();
 
-    for (node, edges) in graph2_sorted.clone() {
+    for (node, edges) in graph2_sorted {
         if node.is_kat() && !*KAT_EXISTS {
             continue;
         }
@@ -336,278 +315,5 @@ async fn main() {
     )
     .unwrap();
 
-    println!("graph: {graph:?}");
-    println!("graph2: {graph2:?}");
-    println!("sorted graph2: {graph2_sorted:?}");
-
     println!("\x07Total run time => {:?}", start.elapsed());
-}
-
-trait IsKat {
-    fn is_kat(&self) -> bool;
-}
-
-impl IsKat for Arc<str> {
-    fn is_kat(&self) -> bool {
-        self.clone() == KAT_ID.0 || self.clone() == KAT_DISPLAY_NAME.get().unwrap().0
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, Hash)]
-pub struct Id(Arc<str>);
-
-impl Clone for Id {
-    #[inline]
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl ToString for Id {
-    #[inline]
-    fn to_string(&self) -> String {
-        self.0.to_string()
-    }
-}
-
-impl From<String> for Id {
-    #[inline]
-    fn from(value: String) -> Self {
-        Self(value.into())
-    }
-}
-
-impl From<Arc<str>> for Id {
-    #[inline]
-    fn from(value: Arc<str>) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&Arc<str>> for Id {
-    #[inline]
-    fn from(value: &Arc<str>) -> Self {
-        Self(value.clone())
-    }
-}
-
-impl From<&str> for Id {
-    #[inline]
-    fn from(value: &str) -> Self {
-        Self(value.into())
-    }
-}
-
-impl From<Id> for Arc<str> {
-    fn from(value: Id) -> Self {
-        value.0
-    }
-}
-
-impl IsKat for Id {
-    #[inline]
-    fn is_kat(&self) -> bool {
-        *self == *KAT_ID
-    }
-}
-
-#[derive(Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
-pub struct Name(Arc<str>);
-
-impl Clone for Name {
-    #[inline]
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl ToString for Name {
-    #[inline]
-    fn to_string(&self) -> String {
-        self.0.to_string()
-    }
-}
-
-impl From<String> for Name {
-    #[inline]
-    fn from(value: String) -> Self {
-        Self(value.into())
-    }
-}
-
-impl From<Arc<str>> for Name {
-    #[inline]
-    fn from(value: Arc<str>) -> Self {
-        Self(value)
-    }
-}
-
-impl From<Name> for Arc<str> {
-    fn from(value: Name) -> Self {
-        value.0
-    }
-}
-
-impl From<&Name> for Arc<str> {
-    #[inline]
-    fn from(value: &Name) -> Self {
-        value.into()
-    }
-}
-
-impl AsRef<str> for Name {
-    #[inline]
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
-impl IsKat for Name {
-    #[inline]
-    fn is_kat(&self) -> bool {
-        self == KAT_DISPLAY_NAME.get().unwrap()
-    }
-}
-
-#[must_use]
-#[inline]
-pub async fn get_uuid_of(display_name: Name, pool: &SqlitePool) -> Id {
-    let q = "select *
-        from gamelog_join_leave
-        where display_name like ?
-        and user_id is not ''";
-
-    let row = sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
-        .bind(display_name.to_string())
-        .fetch_one(pool)
-        .await
-        .unwrap();
-
-    assert!(
-        !row.user_id.is_empty(),
-        "No user_id found for {}",
-        display_name.to_string()
-    );
-
-    row.user_id.into()
-}
-
-pub async fn get_display_name_for<S>(
-    user_id: Id,
-    pool: Arc<SqlitePool>,
-    cache: Arc<RwLock<HashMap<Id, Arc<str>, S>>>,
-) -> Name
-where
-    S: BuildHasher + Send + Sync,
-{
-    if let Some(display_name) = cache.read().unwrap().get(&user_id) {
-        return display_name.clone().into();
-    }
-
-    let q = "select *
-        from gamelog_join_leave
-        where user_id like ?
-        order by created_at desc
-        limit 1";
-
-    let name: String = sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
-        .bind(user_id.to_string())
-        .fetch_one(pool.as_ref())
-        .await
-        .unwrap()
-        .display_name;
-
-    let name: Arc<str> = name.into();
-
-    cache.write().unwrap().insert(user_id, name.clone());
-
-    name.into()
-}
-
-#[must_use]
-#[inline]
-pub async fn get_locations_for(user_id: Id, conn: Arc<SqlitePool>) -> HashSet<WorldInstance> {
-    let q = "select *
-        from gamelog_join_leave
-        where user_id like ?";
-
-    let rows = sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
-        .bind(user_id.to_string())
-        .fetch_all(conn.as_ref())
-        .await
-        .unwrap();
-
-    rows.into_iter()
-        .map(std::convert::Into::into)
-        .filter_map(|row: GamelogJoinLeave| row.location)
-        .collect()
-}
-
-#[must_use]
-#[inline]
-pub async fn get_others_for<S>(
-    user_id: Id,
-    conn: Arc<SqlitePool>,
-    locations: HashSet<WorldInstance, S>,
-) -> HashMap<Id, u32>
-where
-    S: BuildHasher + Send + Sync,
-{
-    let mut others = vec![];
-    // let len = locations.len();
-    let mut handles = JoinSet::new();
-    for (idx, location) in locations.into_iter().enumerate() {
-        let conn = conn.clone();
-        let user_id = user_id.clone();
-        handles.spawn(async move {
-            let q = "select *
-                    from gamelog_join_leave
-                    where location like ?
-                    and location != ''
-                    and user_id != ?
-                    and user_id is not ''";
-
-            let prefix = location.get_prefix();
-            let location = format!("{prefix}%");
-
-            let rows = sqlx::query_as::<_, GamelogJoinLeaveRow>(q)
-                .bind(location)
-                .bind(user_id.to_string())
-                .fetch_all(conn.as_ref())
-                .await
-                .unwrap();
-
-            let rows = rows.into_iter().map(std::convert::Into::into);
-
-            let other = rows
-                .map(|row: GamelogJoinLeave| row.user_id.unwrap().into())
-                .filter(|it: &Id| !(*KAT_EXISTS && it.is_kat()))
-                .collect::<HashSet<_>>();
-
-            if other.is_empty() {
-                None
-            } else {
-                Some((idx, other))
-            }
-        });
-    }
-
-    handles.len();
-
-    while let Some(handle) = handles.join_next().await {
-        if let Ok(Some((_idx, set))) = handle {
-            others.push(set);
-        }
-    }
-
-    let mut everyone_else = HashMap::new();
-
-    for other in others {
-        for user_id in other {
-            let old = everyone_else.get(&user_id).unwrap_or(&0_u32);
-            everyone_else.insert(user_id, old + 1);
-        }
-    }
-
-    everyone_else
 }

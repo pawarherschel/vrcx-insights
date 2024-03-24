@@ -12,6 +12,7 @@ pub enum Regions {
 }
 
 impl From<&str> for Regions {
+    #[inline]
     fn from(value: &str) -> Self {
         let value = value.to_lowercase();
         Self::from(value)
@@ -20,6 +21,7 @@ impl From<&str> for Regions {
 
 #[allow(clippy::fallible_impl_from)] // ~kat
 impl From<String> for Regions {
+    #[inline]
     fn from(value: String) -> Self {
         let value = value.to_lowercase();
         match value.as_str() {
@@ -37,6 +39,7 @@ impl From<String> for Regions {
 impl FromStr for Regions {
     type Err = std::string::ParseError;
 
+    #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self::from(s))
     }

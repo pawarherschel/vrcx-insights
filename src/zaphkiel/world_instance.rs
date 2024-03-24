@@ -20,11 +20,13 @@ impl WorldInstance {
     /// Create a new `WorldInstance` with default values as specified in the `Default` trait.
     #[allow(dead_code)]
     #[must_use]
+    #[inline]
     pub fn new() -> Self {
         Self::default()
     }
 
     #[must_use]
+    #[inline]
     pub fn get_prefix(&self) -> String {
         format!("{}:{}", self.world_id, self.instance_id)
     }
@@ -55,6 +57,7 @@ pub enum WorldInstanceParseError {
 impl FromStr for WorldInstance {
     type Err = WorldInstanceParseError;
 
+    #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.is_empty() {
             return Err(WorldInstanceParseError::Empty);
@@ -105,6 +108,7 @@ impl FromStr for WorldInstance {
 
 #[allow(clippy::fallible_impl_from)] // I want it like that ~kat
 impl From<&str> for WorldInstance {
+    #[inline]
     fn from(s: &str) -> Self {
         Self::from_str(s).unwrap()
     }
@@ -112,6 +116,7 @@ impl From<&str> for WorldInstance {
 
 #[allow(clippy::fallible_impl_from)] // I want it like that ~kat
 impl From<String> for WorldInstance {
+    #[inline]
     fn from(s: String) -> Self {
         Self::from_str(&s).unwrap()
     }
