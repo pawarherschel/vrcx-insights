@@ -42,6 +42,7 @@ pub struct GamelogJoinLeave {
 }
 
 impl Default for GamelogJoinLeave {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
@@ -49,6 +50,7 @@ impl Default for GamelogJoinLeave {
 
 impl GamelogJoinLeave {
     #[must_use]
+    #[inline]
     pub fn new() -> Self {
         let (id, created_at, event, location, user_id, time) = Default::default();
         let display_name = "".into();
@@ -67,6 +69,7 @@ impl GamelogJoinLeave {
 
 #[allow(clippy::fallible_impl_from)] // we want it to fail when it's wrong
 impl From<GamelogJoinLeaveRow> for GamelogJoinLeave {
+    #[inline]
     fn from(row: GamelogJoinLeaveRow) -> Self {
         let mut ret = Self::new();
         ret.id = row.id;

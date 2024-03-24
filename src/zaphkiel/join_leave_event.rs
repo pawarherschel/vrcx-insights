@@ -9,6 +9,7 @@ pub enum JoinLeaveEvent {
 }
 
 impl From<&str> for JoinLeaveEvent {
+    #[inline]
     fn from(value: &str) -> Self {
         let value = value.to_lowercase();
         Self::from(value)
@@ -17,6 +18,7 @@ impl From<&str> for JoinLeaveEvent {
 
 #[allow(clippy::fallible_impl_from)] // we want it to fail if it's wrong
 impl From<String> for JoinLeaveEvent {
+    #[inline]
     fn from(value: String) -> Self {
         let value = value.to_lowercase();
         match value.as_str() {
@@ -32,6 +34,7 @@ impl From<String> for JoinLeaveEvent {
 impl FromStr for JoinLeaveEvent {
     type Err = std::string::ParseError;
 
+    #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self::from(s))
     }
