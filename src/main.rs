@@ -5,9 +5,13 @@ use std::convert::Into;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+use cushy::Run;
+// use cushy::value::Dynamic;
+// use cushy::widget::MakeWidget as _;
+// use cushy::Run as _;
 use cushy::value::Dynamic;
-use cushy::widget::MakeWidget as _;
-use cushy::Run as _;
+use cushy::widget::MakeWidget;
+use cushy::widgets::button::ButtonKind;
 use petgraph::dot::Config;
 use petgraph::Graph;
 use ron::ser::{to_writer_pretty, PrettyConfig};
@@ -19,22 +23,84 @@ use vrcx_insights::zaphkiel::is_kat::{Id, IsKat, Name, KAT_DISPLAY_NAME, KAT_EXI
 use vrcx_insights::zaphkiel::metadata::Metadata;
 use vrcx_insights::{get_display_name_for, get_locations_for, get_others_for};
 
-#[allow(clippy::too_many_lines)]
-#[tokio::main(flavor = "multi_thread", worker_threads = 15)]
-async fn main() {
-    let loop_status: Dynamic<i32> = Dynamic::default();
-    let count = Dynamic::new(0_isize);
+fn cushy_test() -> cushy::Result {
+    let clicked_label = Dynamic::new(String::from("Click a Button"));
+    let default_is_outline = Dynamic::new(false);
+    let default_button_style = default_is_outline.map_each(|is_outline| {
+        if *is_outline {
+            ButtonKind::Outline
+        } else {
+            ButtonKind::Solid
+        }
+    });
 
-    count
-        .to_label()
-        // Use the label as the contents of a button
-        .into_button()
-        // Set the `on_click` callback to a closure that increments the counter.
-        .on_click(move |_| count.set(count.get() + 1))
-        // Run the application
-        .run();
+    clicked_label
+        .clone()
+        .and(
+            "Normal Button"
+                .into_button()
+                .on_click(
+                    clicked_label.with_clone(|label| {
+                        move |_| label.set(String::from("Clicked Normal Button"))
+                    }),
+                )
+                .and(
+                    "Outline Button"
+                        .into_button()
+                        .on_click(clicked_label.with_clone(|label| {
+                            move |_| label.set(String::from("Clicked Outline Button"))
+                        }))
+                        .kind(ButtonKind::Outline),
+                )
+                .and(
+                    "Transparent Button"
+                        .into_button()
+                        .on_click(clicked_label.with_clone(|label| {
+                            move |_| label.set(String::from("Clicked Transparent Button"))
+                        }))
+                        .kind(ButtonKind::Transparent),
+                )
+                .and(
+                    "Default Button"
+                        .into_button()
+                        .on_click(clicked_label.with_clone(|label| {
+                            move |_| label.set(String::from("Clicked Default Button"))
+                        }))
+                        .kind(default_button_style)
+                        .into_default(),
+                )
+                .and("Set Default to Outline".into_checkbox(default_is_outline))
+                .into_columns(),
+        )
+        .into_rows()
+        .centered()
+        .run()
+}
+
+fn main() {
+    std::thread::spawn(|| {
+        let body = main_loop();
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(15usize)
+            .enable_all()
+            .build()
+            .expect("Failed building the Runtime");
+        rt.block_on(body);
+    });
+
+    cushy_test().unwrap();
+}
+
+#[allow(clippy::too_many_lines)]
+// #[tokio::main(flavor = "multi_thread", worker_threads = 15)]
+async fn main_loop() {
+    let loop_status = Dynamic::new(0u32);
 
     loop_status.set(loop_status.get() + 1);
+
+    let _handle = tokio::task::spawn_blocking(cushy_test);
+
+    // cushy_test();
 
     let start = Instant::now();
 
