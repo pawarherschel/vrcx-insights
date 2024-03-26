@@ -2,7 +2,13 @@
 <module type="EMPTY_MODULE" version="4">
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/cushy/cushy-macros/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cushy/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cushy/guide/guide-examples/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cushy/guide/guide-examples/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cushy/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/cushy/target" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
