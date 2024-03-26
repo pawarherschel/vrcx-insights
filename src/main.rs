@@ -5,13 +5,10 @@ use std::convert::Into;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-use cushy::Run;
-// use cushy::value::Dynamic;
-// use cushy::widget::MakeWidget as _;
-// use cushy::Run as _;
-use cushy::value::{Destination, Dynamic, Source};
-use cushy::widget::MakeWidget;
+use cushy::value::{Destination as _, Dynamic, Source as _};
+use cushy::widget::MakeWidget as _;
 use cushy::widgets::button::ButtonKind;
+use cushy::Run as _;
 use petgraph::dot::Config;
 use petgraph::Graph;
 use ron::ser::{to_writer_pretty, PrettyConfig};
@@ -77,6 +74,7 @@ fn cushy_test() -> cushy::Result {
         .run()
 }
 
+// https://github.com/khonsulabs/cushy-tokio-example/blob/main/src/main.rs
 fn main() {
     std::thread::spawn(|| {
         let body = main_loop();
@@ -98,7 +96,7 @@ async fn main_loop() {
 
     loop_status.set(loop_status.get() + 1);
 
-    let _handle = tokio::task::spawn_blocking(cushy_test);
+    // let _handle = tokio::task::spawn_blocking(cushy_test);
 
     // cushy_test();
 
