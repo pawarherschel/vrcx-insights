@@ -1,8 +1,12 @@
+#![feature(associated_type_defaults)]
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use petgraph::dot::Config;
+use petgraph::graph::NodeIndex;
+use petgraph::visit::Bfs;
 use petgraph::Graph;
 use ron::ser::{to_writer_pretty, PrettyConfig};
 use tokio::task::JoinSet;
@@ -320,10 +324,95 @@ async fn main() {
     println!("\x07Total run time => {:?}", start.elapsed());
 }
 
-struct Edge();
+struct Nu<'a>(pub &'a Graph<Arc<str>, Metadata>, NodeIndex);
 
-impl fuzzy_dbscan::MetricSpace for Edge {
+impl<'a> fuzzy_dbscan::MetricSpace for Nu<'a> {
     fn distance(&self, other: &Self) -> f64 {
+        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+
+        // use petgraph::Graph;
+        // use petgraph::visit::Bfs;
+        //
+        // let mut graph = Graph::<_,()>::new();
+        // let a = graph.add_node(0);
+        //
+        // let mut bfs = Bfs::new(&graph, a);
+        // while let Some(nx) = bfs.next(&graph) {
+        //     // we can access `graph` mutably here still
+        //     graph[nx] += 1;
+        // }
+        //
+        // assert_eq!(graph[a], 1);
+
+        let Nu(graph, idx) = other;
+
+        let graph = *graph;
+
+        let mut bfs = Bfs::new(graph, *idx);
+        while let Some(nx) = bfs.next(graph) {
+            todo!()
+        }
+
         todo!()
     }
 }
+
+// pub trait Node {
+//     fn get_edge(&self) -> (Arc<str>, Metadata);
+//     fn get_neighbors(&self) -> Vec<(Arc<str>, Metadata)>;
+//     fn get_hashmap() -> &'static HashMap<Arc<str>, HashMap<Arc<str>, Metadata>>;
+// }
+//
+// pub trait Bfs {
+//     /// return type is (Number of Hops, Distance between them)
+//     fn get_distance(&self, other: &Self) -> (u64, f64)
+//     where
+//         Self: Node + Sized + Eq,
+//     {
+//         let hashmap = Self::get_hashmap();
+//
+//         let recurse = |acc: (u64, f64), goal: &Self, curr: &Self| -> (u64, f64) {
+//             if curr == goal {
+//                 return acc;
+//             }
+//
+//             let neighbors = curr.get_neighbors();
+//
+//             for (name, _) in &neighbors {
+//                 let other_edges = hashmap.get(name).unwrap();
+//             }
+//             todo!()
+//         };
+//
+//         todo!()
+//     }
+// }
+//
+// pub struct Edge<T>(T)
+// where
+//     T: Node + Bfs;
+//
+// impl<T> fuzzy_dbscan::MetricSpace for Edge<T>
+// where
+//     T: Node + Eq,
+// {
+//     fn distance(&self, other: &Self) -> f64 {
+//         let node = &self.0;
+//         let other = &other.0;
+//         let (_hops, dist) = node.get_distance(other);
+//
+//         dist
+//     }
+// }
