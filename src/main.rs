@@ -9,7 +9,7 @@ use cushy::Run;
 // use cushy::value::Dynamic;
 // use cushy::widget::MakeWidget as _;
 // use cushy::Run as _;
-use cushy::value::Dynamic;
+use cushy::value::{Destination, Dynamic, Source};
 use cushy::widget::MakeWidget;
 use cushy::widgets::button::ButtonKind;
 use petgraph::dot::Config;
