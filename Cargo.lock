@@ -409,6 +409,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fuzzy_dbscan"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f5c97db24880123f0c04c014768b8d9a6c5a88dd65911e05033440219900a3d"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1525,6 +1536,7 @@ checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
 name = "vrcx-insights"
 version = "0.1.0"
 dependencies = [
+ "fuzzy_dbscan",
  "petgraph",
  "ron",
  "serde",
@@ -1545,6 +1557,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7daec296f25a1bae309c0cd5c29c4b260e510e6d813c286b19eaadf409d40fce"
 dependencies = [
  "cfg-if",
+ "serde",
+ "serde_json",
  "wasm-bindgen-macro",
 ]
 

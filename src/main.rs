@@ -315,5 +315,15 @@ async fn main() {
     )
     .unwrap();
 
+    println!("starting FuzzyDBSCAN");
+
     println!("\x07Total run time => {:?}", start.elapsed());
+}
+
+struct Edge();
+
+impl fuzzy_dbscan::MetricSpace for Edge {
+    fn distance(&self, other: &Self) -> f64 {
+        todo!()
+    }
 }
