@@ -378,6 +378,11 @@ async fn main() {
 
     println!("\x07Total run time => {:?}", start.elapsed());
     dbg!(unsafe { MAX_SCORE });
+    dbg!(unsafe { SCORES });
+    let avg = unsafe { SCORES }
+        .iter()
+        .enumerate()
+        .fold(0u64, |acc, (idx, hits)| acc + idx as u64 * hits);
 }
 
 #[derive(serde::Serialize, Debug)]
@@ -392,6 +397,7 @@ pub struct MyGraph<'graph>(&'graph HashMap<Arc<str>, HashSet<Arc<str>>>);
 
 impl<'graph> MyGraph<'graph> {
     #[inline]
+    #[must_use]
     pub fn get_shortest_between(&self, start: Arc<str>, goal: Arc<str>) -> f64 {
         let mut visited = BTreeSet::new();
         self.get_shortest_recurse(start.clone(), goal, start, 0.0, &mut visited)
@@ -415,6 +421,7 @@ impl<'graph> MyGraph<'graph> {
             if score > unsafe { MAX_SCORE } && score.is_finite() {
                 unsafe { MAX_SCORE = score }
             }
+            unsafe { SCORES[score as usize] += 1 }
             return Some(score);
         }
 
@@ -429,7 +436,7 @@ impl<'graph> MyGraph<'graph> {
                     start.clone(),
                     goal.clone(),
                     child.clone(),
-                    score + 0.9,
+                    score + 1.0,
                     visited,
                 )
             })
@@ -438,6 +445,7 @@ impl<'graph> MyGraph<'graph> {
 }
 
 static mut MAX_SCORE: f64 = 0.0;
+static mut SCORES: [u64; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 #[derive(Debug)]
 pub struct FDbscanNode<'graph> {
