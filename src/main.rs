@@ -1,12 +1,11 @@
 #![feature(associated_type_defaults)]
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+use fuzzy_dbscan::{Assignment, Category, FuzzyDBSCAN};
 use petgraph::dot::Config;
-use petgraph::graph::NodeIndex;
-use petgraph::visit::Bfs;
 use petgraph::Graph;
 use ron::ser::{to_writer_pretty, PrettyConfig};
 use tokio::task::JoinSet;
@@ -18,7 +17,7 @@ use vrcx_insights::zaphkiel::metadata::Metadata;
 use vrcx_insights::{get_display_name_for, get_locations_for, get_others_for};
 
 #[allow(clippy::too_many_lines)]
-#[tokio::main(flavor = "multi_thread", worker_threads = 15)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 12)]
 async fn main() {
     let start = Instant::now();
 
@@ -321,98 +320,144 @@ async fn main() {
 
     println!("starting FuzzyDBSCAN");
 
+    let scan = FuzzyDBSCAN {
+        eps_min: 1.0,
+        eps_max: 20.0,
+        pts_min: 1.0,
+        pts_max: 200.0,
+    };
+
+    let my_graph = MyGraph(&undirected_graph);
+
+    let points = dbg!(&undirected_graph)
+        .keys()
+        .map(|node| FDbscanNode {
+            graph: my_graph.clone(),
+            name: node.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    dbg!(points.len());
+
+    let clusters = scan.cluster(&points);
+
+    let clusters = clusters
+        .into_iter()
+        .map(|cluster| {
+            cluster
+                .iter()
+                .map(
+                    |Assignment {
+                         index,
+                         label,
+                         category,
+                     }| {
+                        let name = points.get(*index).unwrap().name.clone();
+
+                        MyAssignment {
+                            name,
+                            label: *label,
+                            category: match category {
+                                Category::Core => Category::Core,
+                                Category::Border => Category::Border,
+                                Category::Noise => Category::Noise,
+                            },
+                        }
+                    },
+                )
+                .collect::<Vec<MyAssignment>>()
+        })
+        .collect::<Vec<_>>();
+
+    to_writer_pretty(
+        std::fs::File::create("clusters.ron").unwrap(),
+        &clusters,
+        PrettyConfig::default(),
+    )
+    .unwrap();
+
     println!("\x07Total run time => {:?}", start.elapsed());
+    dbg!(unsafe { MAX_SCORE });
 }
 
-struct Nu<'a>(pub &'a Graph<Arc<str>, Metadata>, NodeIndex);
+#[derive(serde::Serialize, Debug)]
+struct MyAssignment {
+    name: Arc<str>,
+    label: f64,
+    category: Category,
+}
 
-impl<'a> fuzzy_dbscan::MetricSpace for Nu<'a> {
-    fn distance(&self, other: &Self) -> f64 {
-        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-        // AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+#[derive(Debug, Clone)]
+pub struct MyGraph<'graph>(&'graph HashMap<Arc<str>, HashSet<Arc<str>>>);
 
-        // use petgraph::Graph;
-        // use petgraph::visit::Bfs;
-        //
-        // let mut graph = Graph::<_,()>::new();
-        // let a = graph.add_node(0);
-        //
-        // let mut bfs = Bfs::new(&graph, a);
-        // while let Some(nx) = bfs.next(&graph) {
-        //     // we can access `graph` mutably here still
-        //     graph[nx] += 1;
-        // }
-        //
-        // assert_eq!(graph[a], 1);
+impl<'graph> MyGraph<'graph> {
+    #[inline]
+    pub fn get_shortest_between(&self, start: Arc<str>, goal: Arc<str>) -> f64 {
+        let mut visited = BTreeSet::new();
+        self.get_shortest_recurse(start.clone(), goal, start, 0.0, &mut visited)
+            .unwrap_or(f64::INFINITY)
+    }
 
-        let Nu(graph, idx) = other;
-
-        let graph = *graph;
-
-        let mut bfs = Bfs::new(graph, *idx);
-        while let Some(nx) = bfs.next(graph) {
-            todo!()
+    #[inline]
+    fn get_shortest_recurse(
+        &self,
+        start: Arc<str>,
+        goal: Arc<str>,
+        current: Arc<str>,
+        score: f64,
+        visited: &mut BTreeSet<Arc<str>>,
+    ) -> Option<f64> {
+        if visited.get(&current).is_some() {
+            return None;
         }
 
-        todo!()
+        if current == goal {
+            if score > unsafe { MAX_SCORE } && score.is_finite() {
+                unsafe { MAX_SCORE = score }
+            }
+            return Some(score);
+        }
+
+        visited.insert(current.clone());
+
+        let children = self.0.get(&current).unwrap();
+
+        children
+            .iter()
+            .flat_map(|child| {
+                self.get_shortest_recurse(
+                    start.clone(),
+                    goal.clone(),
+                    child.clone(),
+                    score + 0.9,
+                    visited,
+                )
+            })
+            .next()
     }
 }
 
-// pub trait Node {
-//     fn get_edge(&self) -> (Arc<str>, Metadata);
-//     fn get_neighbors(&self) -> Vec<(Arc<str>, Metadata)>;
-//     fn get_hashmap() -> &'static HashMap<Arc<str>, HashMap<Arc<str>, Metadata>>;
-// }
-//
-// pub trait Bfs {
-//     /// return type is (Number of Hops, Distance between them)
-//     fn get_distance(&self, other: &Self) -> (u64, f64)
-//     where
-//         Self: Node + Sized + Eq,
-//     {
-//         let hashmap = Self::get_hashmap();
-//
-//         let recurse = |acc: (u64, f64), goal: &Self, curr: &Self| -> (u64, f64) {
-//             if curr == goal {
-//                 return acc;
-//             }
-//
-//             let neighbors = curr.get_neighbors();
-//
-//             for (name, _) in &neighbors {
-//                 let other_edges = hashmap.get(name).unwrap();
-//             }
-//             todo!()
-//         };
-//
-//         todo!()
-//     }
-// }
-//
-// pub struct Edge<T>(T)
-// where
-//     T: Node + Bfs;
-//
-// impl<T> fuzzy_dbscan::MetricSpace for Edge<T>
-// where
-//     T: Node + Eq,
-// {
-//     fn distance(&self, other: &Self) -> f64 {
-//         let node = &self.0;
-//         let other = &other.0;
-//         let (_hops, dist) = node.get_distance(other);
-//
-//         dist
-//     }
-// }
+static mut MAX_SCORE: f64 = 0.0;
+
+#[derive(Debug)]
+pub struct FDbscanNode<'graph> {
+    pub graph: MyGraph<'graph>,
+    pub name: Arc<str>,
+}
+
+impl<'graph> fuzzy_dbscan::MetricSpace for FDbscanNode<'graph> {
+    #[inline]
+    fn distance(&self, other: &Self) -> f64 {
+        let dist = self
+            .graph
+            .get_shortest_between(self.name.clone(), other.name.clone());
+
+        // println!(
+        //     "{from} -> {to} : {dist}",
+        //     from = self.name.clone(),
+        //     to = other.name.clone()
+        // );
+
+        dist
+    }
+}

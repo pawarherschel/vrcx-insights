@@ -10,5 +10,13 @@ graphs/
 !dots/boop
 dot_edge_no_label.dot
 dot_edge_with_label.dot
-/.kat
+.kat
+._kat
 cushy
+fdbscan.txt
+clusters.ron
+perf.data
+perf.data.old
+~*
+.idea
+*.sync-conflict*.*

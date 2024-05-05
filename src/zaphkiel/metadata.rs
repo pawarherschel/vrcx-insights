@@ -64,7 +64,7 @@ impl<'de> Visitor<'de> for MetadataVisitor {
     }
 
     #[inline]
-    fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error>
+    fn visit_seq<A>(self, _seq: A) -> Result<Self::Value, A::Error>
     where
         A: SeqAccess<'de>,
     {
